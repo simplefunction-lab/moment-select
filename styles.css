@@ -1,8 +1,9 @@
 /* 글꼴은 모두 앱과 함께 배포한다 (외부 요청 없음)
    - Pretendard: 완성형 한글 2,350자와 라틴 문자만 남긴 가변 글꼴
-   - 나눔펜: '남김', '뺌' 세 글자만 남긴 손글씨 */
+   - 나눔펜: '남김', '뺌'과 'keep', 'drop' 글자만 남긴 손글씨 */
 @font-face { font-family: "Pretendard Variable"; src: url("./vendor/fonts/pretendard-subset.woff2") format("woff2-variations"); font-weight: 45 920; font-display: swap; }
-@font-face { font-family: "Nanum Pen Script"; src: url("./vendor/fonts/nanum-pen-marks.woff2") format("woff2"); font-display: block; }
+@font-face { font-family: "Nanum Pen Script"; src: url("./vendor/fonts/nanum-pen-marks.woff2") format("woff2"); font-display: block; unicode-range: U+AC00-D7A3; }
+@font-face { font-family: "Nanum Pen Script"; src: url("./vendor/fonts/nanum-pen-marks-latin.woff2") format("woff2"); font-display: block; unicode-range: U+0000-00FF; }
 
   /* =====================================================================
      디자인 토큰
@@ -255,6 +256,7 @@
     .goal { min-width: 0; flex: 1; }
     .goal-note { display: none; }
     #reviewer-select { max-width: 96px; }
+    #language-select { max-width: 92px; }
     .brand { font-size: 14px; }
     .tabs { order: 3; width: calc(100% + 24px); margin: 0 -12px; height: 42px; overflow-x: auto; border-top: 1px solid var(--rule); padding: 0 4px; }
     .setup { padding: 28px 16px 60px; }
