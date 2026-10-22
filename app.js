@@ -162,15 +162,17 @@ async function dbSet(key, value) {
   });
 }
 let saveTimer = null;
+function saveProjectNow() {
+  clearTimeout(saveTimer);
+  if (!state.folderName) return Promise.resolve(false);
+  return dbSet(`project:${state.folderName}`, {
+    settings: state.settings, reviewers: state.reviewers, models: state.models, rounds: state.rounds,
+    dividerSeen: state.dividerSeen, sentSampleCount: state.sentSampleCount, expandedGroups: [...state.expandedGroups],
+  });
+}
 function saveProjectSoon() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    if (!state.folderName) return;
-    dbSet(`project:${state.folderName}`, {
-      settings: state.settings, reviewers: state.reviewers, models: state.models, rounds: state.rounds,
-      dividerSeen: state.dividerSeen, sentSampleCount: state.sentSampleCount, expandedGroups: [...state.expandedGroups],
-    });
-  }, 300);
+  saveTimer = setTimeout(saveProjectNow, 300);
 }
 
 /* =====================================================================
@@ -1160,19 +1162,45 @@ $('#filters').onclick = (event) => {
 };
 $('#compare-input').onchange = (event) => { state.compareMode = event.target.checked; event.target.blur(); render(); };
 
-function renderFilmstrip(entries) {
-  // entries: [{ids, photo, count}] 지금 볼 것부터
+// 필름 띠에서 누른 사진(priorityIds)을 뺀 원래 순서로 큐를 만든다.
+// 띠는 이 순서로 고정해서, 썸네일을 눌러도 띠 전체가 다시 섞이지 않게 한다.
+function naturalQueue(buildQueue) {
+  const savedPriorityIds = state.priorityIds;
+  state.priorityIds = [];
+  try { return buildQueue(); } finally { state.priorityIds = savedPriorityIds; }
+}
+
+const FILMSTRIP_VISIBLE = 16;
+function renderFilmstrip(entries, currentIds = []) {
+  // entries: [{ids, photo, count}] 원래 볼 순서. currentIds: 지금 무대에 떠 있는 사진
   const filmstrip = $('#filmstrip');
-  const visible = entries.slice(0, 16);
-  filmstrip.innerHTML = visible.map((entry, index) => `
-    <button class="${index === 0 ? 'current' : ''}" data-ids="${escapeHtml(JSON.stringify(entry.ids))}" title="${escapeHtml(entry.photo.relPath)}" aria-label="${index === 0 ? t('filmCurrent') : t('filmNth', index + 1)}">
+  const isCurrent = (entry) => entry.ids.some((id) => currentIds.includes(id));
+  const currentIndex = entries.findIndex(isCurrent);
+  // 지금 보는 사진이 앞쪽 16장 밖이면 그 근처부터 보여준다
+  const start = currentIndex >= FILMSTRIP_VISIBLE ? currentIndex - 3 : 0;
+  const visible = entries.slice(start, start + FILMSTRIP_VISIBLE);
+  filmstrip.innerHTML = visible.map((entry, offset) => {
+    const order = start + offset;
+    const current = order === currentIndex;
+    return `
+    <button class="${current ? 'current' : ''}" data-order="${order}" data-ids="${escapeHtml(JSON.stringify(entry.ids))}" title="${escapeHtml(entry.photo.relPath)}" aria-label="${current ? t('filmCurrent') : t('filmNth', order + 1)}" ${current ? 'aria-current="true"' : ''}>
       <img src="${entry.photo.thumbUrl}" alt="" loading="lazy">${entry.count > 1 ? `<span class="count num">${entry.count}</span>` : ''}
-    </button>`).join('') + (entries.length > visible.length ? `<span class="more num">${t('filmMore', entries.length - visible.length)}</span>` : '');
+    </button>`;
+  }).join('') + (entries.length > start + visible.length ? `<span class="more num">${t('filmMore', entries.length - start - visible.length)}</span>` : '');
+  // 지금 보는 썸네일이 띠 밖으로 밀려나 있으면 띠만 옆으로 넘긴다 (페이지는 움직이지 않게 scrollLeft로)
+  const currentButton = $('button.current', filmstrip);
+  if (currentButton) {
+    const left = currentButton.getBoundingClientRect().left - filmstrip.getBoundingClientRect().left + filmstrip.scrollLeft;
+    if (left < filmstrip.scrollLeft || left + currentButton.offsetWidth > filmstrip.scrollLeft + filmstrip.clientWidth) {
+      filmstrip.scrollLeft = Math.max(0, left - 16);
+    }
+  }
 }
 $('#filmstrip').onclick = (event) => {
   const button = event.target.closest('button[data-ids]');
   if (!button || button.classList.contains('current')) return;
-  state.priorityIds = JSON.parse(button.dataset.ids);
+  // 맨 앞(원래 볼 차례) 사진을 누르면 따로 당겨 온 사진을 풀고 원래 순서로 돌아간다
+  state.priorityIds = button.dataset.order === '0' ? [] : JSON.parse(button.dataset.ids);
   render();
 };
 
@@ -1207,11 +1235,11 @@ function renderPickView() {
     const queue = firstPassQueue();
     const remaining = queue.reduce((sum, unit) => sum + unit.ids.filter((id) => !statusOf(id)).length, 0);
     setNotice(t('noticeFirst', { remaining, scored: state.settings.useScore }));
-    renderFilmstrip(queue.filter((unit) => unit.type !== 'divider').map((unit) => {
+    const head = queue[0];
+    renderFilmstrip(naturalQueue(firstPassQueue).filter((unit) => unit.type !== 'divider').map((unit) => {
       const members = unit.ids.map((id) => state.photoById.get(id));
       return { ids: unit.ids, photo: members.find((photo) => photo.groupBest) ?? members[0], count: unit.ids.length };
-    }));
-    const head = queue[0];
+    }), head?.ids ?? []);
     if (!head) {
       return renderEmpty(stage, t('firstDoneTitle'), t('firstDoneBody', { keep: keepCount, target }),
         [{ label: t('btnDistill'), primary: keepCount > target, run: () => setView('distill') }, { label: t('btnRescueDropped'), run: () => setView('rescue') }, { label: t('btnExport'), primary: keepCount <= target, run: () => setView('export') }]);
@@ -1230,7 +1258,7 @@ function renderPickView() {
     setNotice(keepCount > target
       ? t('noticeDistillOver', keepCount - target)
       : t('noticeDistillOk', target), keepCount > target);
-    renderFilmstrip(queue.map((photo) => ({ ids: [photo.id], photo, count: 1 })));
+    renderFilmstrip(naturalQueue(distillQueue).map((photo) => ({ ids: [photo.id], photo, count: 1 })), queue[0] ? [queue[0].id] : []);
     if (state.compareMode) {
       const pair = comparePair();
       if (pair) return renderCompare(stage, pair);
@@ -1247,8 +1275,8 @@ function renderPickView() {
   renderFilters(dropIds().map((id) => state.photoById.get(id)));
   const queue = rescueQueue();
   setNotice(t('noticeRescue'));
-  renderFilmstrip(queue.map((photo) => ({ ids: [photo.id], photo, count: 1 })));
   const head = queue[0];
+  renderFilmstrip(naturalQueue(rescueQueue).map((photo) => ({ ids: [photo.id], photo, count: 1 })), head ? [head.id] : []);
   if (!head) {
     return renderEmpty(stage, t('rescueDoneTitle'), t('rescueDoneBody', { keep: keepCount, target }),
       [{ label: t('btnRescueAgain'), run: () => { state.rounds[state.currentReviewer].rescue = []; saveProjectSoon(); render(); } },
@@ -1924,6 +1952,7 @@ function applyLanguage() {
   }
   renderPresetOptions();
   render();
+  renderUpdateBar();
 }
 $('#language-select').onchange = (event) => {
   setLanguage(event.target.value);
@@ -1932,8 +1961,47 @@ $('#language-select').onchange = (event) => {
 };
 
 // 설치형 웹앱: 한 번 열고 나면 인터넷 없이도 동작하게 앱 파일을 기기에 보관한다
+// 보관한 파일로 열리기 때문에, 새 버전을 배포해도 이미 열린 화면은 예전 코드로 돈다.
+// 새 버전이 자리를 잡으면(controllerchange) 알림 줄을 띄워 새로고침을 권한다.
+let updateBarShown = false;
+function updateBarMessage() {
+  if (!state.photos.length) return t('updateReady');
+  // 폴더 핸들로 연 사진은 '이어서 고르기'로 바로 돌아오고, 파일 선택으로 연 사진은 다시 골라야 한다
+  return state.photos[0].handle ? t('updateReadyResume') : t('updateReadyRepick');
+}
+function renderUpdateBar() {
+  if (!updateBarShown) return;
+  const bar = $('#update-bar');
+  bar.innerHTML = `<span class="spacer">${updateBarMessage()}</span>`;
+  const reloadButton = document.createElement('button');
+  reloadButton.className = 'button primary';
+  reloadButton.textContent = t('updateReload');
+  reloadButton.onclick = async () => {
+    reloadButton.disabled = true;
+    await saveProjectNow(); // 고른 결과를 먼저 저장하고 새로고침
+    location.reload();
+  };
+  const laterButton = document.createElement('button');
+  laterButton.className = 'button quiet';
+  laterButton.textContent = t('updateLater');
+  laterButton.onclick = () => { updateBarShown = false; bar.classList.add('hidden'); };
+  bar.append(reloadButton, laterButton);
+  bar.classList.remove('hidden');
+}
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-  navigator.serviceWorker.register('./sw.js').catch((error) => console.warn('service worker', error));
+  // 처음 방문해서 서비스 워커가 막 생긴 경우는 새 버전이 아니니 알리지 않는다
+  const hadController = Boolean(navigator.serviceWorker.controller);
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || updateBarShown) return;
+    updateBarShown = true;
+    renderUpdateBar();
+  });
+  navigator.serviceWorker.register('./sw.js').then((registration) => {
+    // 휴대폰은 탭을 며칠씩 열어 두기도 하니, 화면으로 돌아올 때마다 새 버전을 확인한다
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') registration.update().catch(() => {});
+    });
+  }).catch((error) => console.warn('service worker', error));
 }
 // 진단용: ?debug=1 이면 콘솔에서 상태를 볼 수 있게 한다 (사진 데이터는 이 기기 안에만 있다)
 if (new URLSearchParams(location.search).get('debug') === '1') {

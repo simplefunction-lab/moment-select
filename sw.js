@@ -1,6 +1,6 @@
 // 모먼트 셀렉 서비스 워커
 // 앱 파일만 기기에 보관해서 오프라인으로 열리게 한다. 사진은 다루지 않는다.
-const CACHE_NAME = 'moment-select-v7';
+const CACHE_NAME = 'moment-select-v8';
 // 앱을 이루는 파일 전체 (라이브러리, 모델, 글꼴 포함)
 const APP_FILES = [
   './',
@@ -27,7 +27,10 @@ const APP_FILES = [
 ];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_FILES)).then(() => self.skipWaiting()));
+  // cache: 'reload' 로 브라우저 HTTP 캐시를 건너뛴다. GitHub Pages는 파일을 10분 캐시해서,
+  // 배포 직후 설치되면 새 서비스 워커가 예전 app.js를 담아 버릴 수 있다.
+  const freshRequests = APP_FILES.map((path) => new Request(path, { cache: 'reload' }));
+  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(freshRequests)).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (event) => {

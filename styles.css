@@ -133,7 +133,9 @@
   .sheet img { width: 100%; aspect-ratio: 3/2; object-fit: cover; display: block; background: var(--sunken); }
 
   /* ---------- 고르기 화면 ---------- */
-  .pick { display: grid; grid-template-rows: auto 1fr auto auto; height: 100%; }
+  /* 열을 minmax(0, 1fr)로 막아 둔다. auto 열이면 버튼 줄처럼 안 줄어드는 내용이 열을 화면보다 넓혀서,
+     페이지는 안 밀려도 오른쪽이 잘려 보인다 (scrollWidth 검사로는 안 잡히는 넘침). */
+  .pick { display: grid; grid-template-rows: auto 1fr auto auto; grid-template-columns: minmax(0, 1fr); height: 100%; }
   .toolbar { display: flex; align-items: center; gap: 12px; padding: 10px 16px; flex-wrap: wrap; border-bottom: 1px solid var(--rule); background: var(--ground); }
   .filters { display: flex; gap: 2px; flex-wrap: wrap; }
   .filters button { background: none; border: 1px solid transparent; border-radius: var(--radius-s); height: 28px; padding: 0 9px; color: var(--ink-2); font-weight: 550; }
@@ -259,6 +261,12 @@
   #viewer .close { position: fixed; top: 14px; right: 16px; }
   .toast { position: fixed; top: 64px; right: 16px; max-width: min(440px, 92vw); display: flex; gap: 12px; align-items: center; padding: 12px 14px; background: var(--ink); color: var(--surface); border-radius: var(--radius-m); box-shadow: 0 8px 24px rgba(30, 37, 35, .25); z-index: 30; font-size: 13px; }
   .toast .button { background: transparent; border-color: rgba(255, 255, 255, .35); color: #fff; height: 30px; flex-shrink: 0; }
+  /* 새 버전 알림 줄: 상단 바 바로 아래, 화면 흐름 안에 둬서 사진을 가리지 않는다 */
+  .update-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; padding: 8px 16px; background: var(--ink); color: var(--surface); font-size: 13px; flex-shrink: 0; }
+  .update-bar .spacer { min-width: 12em; }
+  .update-bar .button { height: 30px; flex-shrink: 0; }
+  .update-bar .button.quiet { background: transparent; border-color: rgba(255, 255, 255, .35); color: #fff; }
+  .update-bar .button.quiet:hover { background: rgba(255, 255, 255, .12); }
 
   /* ---------- 좁은 화면의 상단 바 (휴대폰, 태블릿) ----------
      한 줄에 이름, 단계 탭, 언어, 사람, 남긴 사진이 다 들어가지 않으면 화면이 옆으로 밀린다.
