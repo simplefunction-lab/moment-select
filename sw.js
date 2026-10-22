@@ -1,6 +1,14 @@
 // 모먼트 셀렉 서비스 워커
-// 앱 파일만 기기에 보관해서 오프라인으로 열리게 한다. 사진은 다루지 않는다.
-const CACHE_NAME = 'moment-select-v8';
+// 앱 파일을 기기에 보관해서 오프라인으로도 열리게 한다. 사진은 다루지 않는다.
+//
+// 받는 순서
+//   앱 코드(HTML, app.js, i18n.js, styles.css, manifest): 서버에서 먼저 받고, 안 되면 보관본
+//     인터넷이 되면 열 때마다 최신 버전이 뜬다. 신호가 약해 NETWORK_TIMEOUT_MS 안에 답이 없으면 보관본을 쓴다.
+//   vendor/(얼굴 모델, 글꼴, 아이콘)와 앱 아이콘: 보관본 먼저. 크고 거의 바뀌지 않는다.
+
+const APP_VERSION = 'v9'; // 배포할 때마다 app.js의 APP_VERSION과 같이 올린다
+const CACHE_NAME = `moment-select-${APP_VERSION}`;
+const NETWORK_TIMEOUT_MS = 4000;
 // 앱을 이루는 파일 전체 (라이브러리, 모델, 글꼴 포함)
 const APP_FILES = [
   './',
@@ -40,9 +48,35 @@ self.addEventListener('activate', (event) => {
     .then(() => self.clients.claim()));
 });
 
+// 화면이 "지금 서비스 워커 버전이 뭐냐"고 물으면 답한다 (새 버전 알림 판단용)
+self.addEventListener('message', (event) => {
+  if (event.data?.type === 'get-version') event.ports[0]?.postMessage({ version: APP_VERSION });
+});
+
+const isAppCode = (url) => !url.pathname.includes('/vendor/') && !url.pathname.includes('/icons/')
+  && (url.pathname.endsWith('/') || /\.(html|js|css|webmanifest)$/.test(url.pathname));
+
+// 서버 먼저, 실패하거나 너무 느리면 보관본
+async function networkFirst(event) {
+  const cacheKey = new URL(event.request.url);
+  cacheKey.search = ''; // ?debug=1 같은 꼬리는 떼고 보관
+  const cache = await caches.open(CACHE_NAME);
+  // no-cache: HTTP 캐시가 있어도 서버에 바뀌었는지 묻는다 (안 바뀌었으면 304라 가볍다)
+  const fromNetwork = fetch(event.request, { cache: 'no-cache' }).then((response) => {
+    if (response.ok) event.waitUntil(cache.put(cacheKey.href, response.clone()));
+    return response;
+  });
+  const cached = await cache.match(cacheKey.href);
+  if (!cached) return fromNetwork;
+  const timeout = new Promise((resolve) => setTimeout(() => resolve(cached), NETWORK_TIMEOUT_MS));
+  return Promise.race([fromNetwork.catch(() => cached), timeout]);
+}
+
 self.addEventListener('fetch', (event) => {
   const request = event.request;
-  if (request.method !== 'GET' || new URL(request.url).origin !== self.location.origin) return;
+  const url = new URL(request.url);
+  if (request.method !== 'GET' || url.origin !== self.location.origin) return;
+  if (isAppCode(url)) { event.respondWith(networkFirst(event)); return; }
   // 보관한 파일이 있으면 그것을, 없으면 네트워크에서 받는다
   event.respondWith(caches.match(request, { ignoreSearch: true }).then((cached) => cached ?? fetch(request)));
 });
