@@ -233,6 +233,7 @@
   #criteria td:last-child, #criteria td:nth-child(2) { text-align: right; width: 60px; }
   #criteria .source { margin-top: 10px; }
   #criteria .diag-title { margin-top: 16px; font-size: 14px; }
+  #criteria .criteria-eyes { margin-top: 12px; font-size: 13px; }
 
   /* ---------- 내보내기 ---------- */
   .export { max-width: 1080px; margin: 0 auto; padding: 36px 24px 80px; }

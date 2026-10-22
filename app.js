@@ -52,7 +52,8 @@ const NOISE_LAPLACIAN_GAIN = 0.40625;      // 노이즈 표준편차 σ가 흐�
 
 // ---------- 점수 항목과 사진 종류별 기본 가중치 ----------
 // 가중치는 출발값일 뿐이며 검증된 값이 아니다. 고르는 동안 사람마다 학습해서 바뀐다
-const FEATURE_KEYS = ['subjectSharp', 'focusSharp', 'exposure', 'expression', 'smile', 'framing', 'clean'];
+const FEATURE_KEYS = ['subjectSharp', 'focusSharp', 'exposure', 'expression', 'smile', 'framing', 'clean', 'eyesOpen'];
+const EYES_OPEN_WEIGHT = 0.15; // '눈 감은 사진 감점'을 켰을 때 눈 뜸 항목의 기본 비중 (나머지 항목과 합쳐 1로 맞춘다)
 // 사진 종류 이름과 설명 문구는 i18n.js에 있다
 const PRESETS = {
   wedding: { crowdMin: 5,
@@ -67,8 +68,11 @@ const PRESETS = {
     weights: { subjectSharp: .28, focusSharp: .18, exposure: .20, expression: .12, smile: .08, framing: .07, clean: .07 } },
 };
 // 가중합 w·x 를 로지스틱 모델 sigmoid(bias + θ·x) 로 옮긴다. 순서는 그대로 유지된다
-function modelFromWeights(weights, source) {
-  return { theta: FEATURE_KEYS.map((key) => SCORE_SCALE * (weights[key] ?? 0)), bias: -SCORE_SCALE * 0.5, source, trainedOn: 0 };
+function modelFromWeights(weights, source, penalizeClosedEyes) {
+  // 눈 감음 감점을 끄면 눈 뜸 항목 비중은 0. 켜면 기본 비중을 더하고 전체 합을 1로 다시 맞춘다
+  const mergedWeights = { ...weights, eyesOpen: penalizeClosedEyes ? EYES_OPEN_WEIGHT : 0 };
+  const totalWeight = Object.values(mergedWeights).reduce((sum, weight) => sum + weight, 0) || 1;
+  return { theta: FEATURE_KEYS.map((key) => SCORE_SCALE * ((mergedWeights[key] ?? 0) / totalWeight)), bias: -SCORE_SCALE * 0.5, source, trainedOn: 0 };
 }
 
 // ---------- 전체 상태 ----------
@@ -79,7 +83,7 @@ const state = {
   groups: new Map(),             // 묶음 id에서 사진 id 배열로
   units: [],                     // 1차 셀렉 단위 (낱장 또는 묶음)
   expandedGroups: new Set(),     // '한 장씩 보기'로 푼 묶음
-  settings: { preset: 'wedding', target: 30, useCategories: true, crowdMin: 5, useScore: true, share: false },
+  settings: { preset: 'wedding', target: 30, useCategories: true, crowdMin: 5, useScore: true, penalizeClosedEyes: true, share: false },
   reviewers: { a: { name: t('defaultNameA'), decisions: {} }, b: { name: t('defaultNameB'), decisions: {} } }, // decisions: 사진 id에서 {status, at, addedAt, log}
   currentReviewer: 'a',
   priorModel: null,              // 사진 종류 기본값 또는 서버에서 받은 기본 모델
@@ -191,6 +195,7 @@ function applySettingsFromForm() {
   state.settings.useCategories = $('#category-input').checked;
   state.settings.crowdMin = Math.max(3, parseInt($('#crowd-input').value, 10) || 5);
   state.settings.useScore = $('#score-input').checked;
+  state.settings.penalizeClosedEyes = $('#eyes-input').checked;
   state.settings.share = Boolean(COLLECT_ENDPOINT) && $('#share-input').checked;
   state.reviewers.a.name = $('#name-a').value.trim() || t('defaultNameA');
   state.reviewers.b.name = $('#name-b').value.trim() || t('defaultNameB');
@@ -218,7 +223,7 @@ async function collectImageEntries(directoryHandle, pathPrefix = '') {
 const getPhotoFile = (photo) => (photo.handle ? photo.handle.getFile() : Promise.resolve(photo.file));
 
 async function loadPriorModel() {
-  const fallback = modelFromWeights(preset().weights, 'preset');
+  const fallback = modelFromWeights(preset().weights, 'preset', state.settings.penalizeClosedEyes);
   if (!PRIOR_ENDPOINT) return fallback;
   try {
     const response = await fetch(`${PRIOR_ENDPOINT}?preset=${encodeURIComponent(state.settings.preset)}`);
@@ -240,6 +245,8 @@ async function startWithEntries(folderName, imageEntries) {
     state.reviewers.a.decisions = savedProject.reviewers?.a?.decisions ?? {};
     state.reviewers.b.decisions = savedProject.reviewers?.b?.decisions ?? {};
     state.models = savedProject.models ?? state.models;
+    // 점수 항목 수가 바뀐 예전 학습 결과는 쓸 수 없으니 버리고 다시 배운다
+    for (const reviewerKey of Object.keys(state.models)) if (state.models[reviewerKey]?.theta?.length !== FEATURE_KEYS.length) state.models[reviewerKey] = null;
     state.rounds = savedProject.rounds ?? state.rounds;
     state.dividerSeen = savedProject.dividerSeen ?? state.dividerSeen;
     state.sentSampleCount = savedProject.sentSampleCount ?? state.sentSampleCount;
@@ -335,6 +342,7 @@ let resumeFolderName = ''; // 이어하기 폴더 이름 (언어를 바꿀 때 �
     $('#category-input').checked = state.settings.useCategories;
     $('#crowd-input').value = state.settings.crowdMin;
     $('#score-input').checked = state.settings.useScore;
+    $('#eyes-input').checked = state.settings.penalizeClosedEyes !== false;
     $('#name-a').value = savedProject.reviewers?.a?.name ?? t('defaultNameA');
     $('#name-b').value = savedProject.reviewers?.b?.name ?? t('defaultNameB');
     renderPresetOptions();
@@ -764,6 +772,9 @@ function computeFeatures() {
     if (photo.analysis.failed) { photo.features = null; continue; }
     const faces = mainFacesOf(photo);
     const focusSharp = focusRank(Math.log1p(photo.analysis.focusSharpness));
+    // 눈 뜸: 눈을 판정할 수 있었던 얼굴 중 눈 뜬 비율. 감점을 끄면 모든 사진이 1이라 순서에 영향이 없다
+    const judgedFaces = faces.filter((face) => face.eyesJudged);
+    const eyesOpen = state.settings.penalizeClosedEyes && judgedFaces.length ? 1 - judgedFaces.filter((face) => face.eyesClosed).length / judgedFaces.length : 1;
     const globalExposure = globalExposureScore(photo.analysis.light);
     if (faces.length) {
       photo.features = {
@@ -774,10 +785,11 @@ function computeFeatures() {
         smile: average(faces.map((face) => face.smile)),
         framing: faces.filter((face) => !face.cutAtEdge).length / faces.length,
         clean: 1 - noiseRank(photo.analysis.noise),
+        eyesOpen,
       };
     } else {
       // 인물이 없으면 인물 항목은 초점 부분으로 대신하고, 표정과 구도는 중립값 0.5
-      photo.features = { subjectSharp: focusSharp, focusSharp, exposure: globalExposure, expression: 0.5, smile: 0.5, framing: 0.5, clean: 1 - noiseRank(photo.analysis.noise) };
+      photo.features = { subjectSharp: focusSharp, focusSharp, exposure: globalExposure, expression: 0.5, smile: 0.5, framing: 0.5, clean: 1 - noiseRank(photo.analysis.noise), eyesOpen: 1 };
     }
   }
 }
@@ -1175,7 +1187,7 @@ function photoTagsHtml(photo, { showAdded }) {
   if (state.settings.useScore) tags.push(`<span class="tag num">${t('tagScore', photo.score)}</span>`);
   if (state.settings.useCategories) tags.push(`<span class="tag">${categoryLabel(categoryOf(photo))}</span>`);
   if (photo.groupId && state.view !== 'first') tags.push(`<span class="tag num">${t('tagSimilar', state.groups.get(photo.groupId).length)}</span>`);
-  if (hasClosedEyes(photo)) tags.push(`<span class="tag flag"><i class="ph ph-eye-closed"></i> ${t(state.settings.preset === 'wedding' ? 'tagEyesWedding' : 'tagEyes')}</span>`);
+  if (hasClosedEyes(photo)) tags.push(`<span class="tag flag"><i class="ph ph-eye-closed"></i> ${t(state.settings.preset === 'wedding' && !state.settings.penalizeClosedEyes ? 'tagEyesWedding' : 'tagEyes')}</span>`);
   const decision = decisionOf(photo.id);
   if (showAdded && decision?.addedAt) tags.push(`<span class="tag added">${t('tagReAdded', formatTime(decision.addedAt))}</span>`);
   return tags.join('');
@@ -1613,14 +1625,36 @@ $('#criteria').addEventListener('toggle', (event) => {
   $('#criteria').innerHTML = `
     <h2>${t('criteriaTitle')}</h2>
     <p class="hint source">${sourceText}</p>
+    <label class="check criteria-eyes"><input type="checkbox" id="criteria-eyes" ${state.settings.penalizeClosedEyes ? 'checked' : ''}><span>${t('eyesCheck')}<br><span class="hint">${t('eyesHint')}</span></span></label>
     <table class="num">
       <tr><td class="hint">${t('colItem')}</td><td class="hint">${t('colWeight')}</td>${currentPhoto ? `<td class="hint">${t('colThis')}</td>` : ''}</tr>
       ${FEATURE_KEYS.map((key, index) => `<tr><td>${featureLabel(key)}</td><td>${Math.round((Math.max(0, model.theta[index]) / totalPositive) * 100)}%</td>${currentPhoto?.features ? `<td>${Math.round(currentPhoto.features[key] * 100)}</td>` : ''}</tr>`).join('')}
     </table>
-    <p class="hint source">${t('criteriaNote')}</p>
+    <p class="hint source">${t(state.settings.penalizeClosedEyes ? 'criteriaNoteEyesOn' : 'criteriaNote')}</p>
     <h2 class="diag-title">${t('diagTitle')}</h2>
     <p class="hint source">${diagnosticsText()}</p>`;
+  $('#criteria-eyes').onchange = (changeEvent) => {
+    applyClosedEyesSetting(changeEvent.target.checked);
+    $('#criteria').hidePopover();
+    $('#criteria').showPopover(); // 바뀐 비중으로 패널을 다시 그린다
+  };
 });
+
+// 고르는 도중에 눈 감음 감점을 켜거나 끄면, 항목과 기본 모델을 다시 만들고 학습도 다시 한다
+function applyClosedEyesSetting(penalize) {
+  state.settings.penalizeClosedEyes = penalize;
+  $('#eyes-input').checked = penalize;
+  computeFeatures();
+  state.priorModel = modelFromWeights(preset().weights, 'preset', penalize);
+  for (const reviewerKey of Object.keys(state.models)) {
+    if (state.models[reviewerKey] && !trainModel(reviewerKey)) state.models[reviewerKey] = null;
+  }
+  rescoreAll();
+  buildUnits();
+  saveProjectSoon();
+  render();
+  showToast(t(penalize ? 'eyesOnToast' : 'eyesOffToast'), [], 3000);
+}
 // 분석 정보: 얼굴 검출이 어떤 방식으로 돌았고 얼마나 찾았는지 (문제 제보를 받을 때 확인용)
 function diagnosticsText() {
   const analyzedWithFaces = state.photos.filter((photo) => photo.analysis?.faces);
@@ -1679,7 +1713,7 @@ function selectionListText(ids) {
   const photos = ids.map((id) => state.photoById.get(id));
   const closedEyePhotos = photos.filter(hasClosedEyes);
   const lines = [t('listHeader', photos.length), t('listFolder', state.folderName), t('listCreated', formatTime(Date.now())), '', ...photos.map((photo) => photo.relPath)];
-  if (closedEyePhotos.length) lines.push('', t('listEyes', { count: closedEyePhotos.length, wedding: state.settings.preset === 'wedding' }), ...closedEyePhotos.map((photo) => photo.relPath));
+  if (closedEyePhotos.length) lines.push('', t('listEyes', { count: closedEyePhotos.length, wedding: state.settings.preset === 'wedding' && !state.settings.penalizeClosedEyes }), ...closedEyePhotos.map((photo) => photo.relPath));
   return lines.join('\n');
 }
 

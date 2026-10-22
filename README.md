@@ -24,9 +24,9 @@ Two people can pick separately and merge: kept by both, or kept by either.
 
 ### Scoring
 
-Each photo gets seven values between 0 and 1: subject sharpness, sharpness of the in-focus area, exposure, absence of frowns, smiles, faces not cut off at the edge, and low noise. Sharpness and noise are ranked against the other photos in the same set.
+Each photo gets eight values between 0 and 1: subject sharpness, sharpness of the in-focus area, exposure, absence of frowns, smiles, faces not cut off at the edge, low noise, and open eyes. Sharpness and noise are ranked against the other photos in the same set.
 
-Starting weights depend on the photo type (wedding, travel, events, family, other). After about 20 decisions, a logistic regression refits the weights to the person picking, and the remaining photos are reordered. Closed eyes are flagged but never scored, since studios can retouch them.
+Starting weights depend on the photo type (wedding, travel, events, family, other). After about 20 decisions, a logistic regression refits the weights to the person picking, and the remaining photos are reordered. Closed-eye shots score lower by default. Turn this off if your photographer will retouch the eyes, as wedding studios often do; the shots are then only flagged.
 
 ## Run locally
 
@@ -73,9 +73,9 @@ npx serve .
 
 ### 점수
 
-사진마다 0에서 1 사이 값 7개를 매겨요. 인물 선명도, 초점 부분 선명도, 노출, 찡그림 없음, 웃음, 얼굴 안 잘림, 노이즈 적음이에요. 선명도와 노이즈는 같은 폴더 사진들 사이의 순위로 계산해요.
+사진마다 0에서 1 사이 값 8개를 매겨요. 인물 선명도, 초점 부분 선명도, 노출, 찡그림 없음, 웃음, 얼굴 안 잘림, 노이즈 적음, 눈 뜸이에요. 선명도와 노이즈는 같은 폴더 사진들 사이의 순위로 계산해요.
 
-처음 가중치는 사진 종류(웨딩과 스냅, 여행, 행사와 모임, 아이와 가족, 기타)마다 달라요. 결정이 20건쯤 쌓이면 고르는 사람의 결정으로 로지스틱 회귀를 다시 맞추고 남은 사진 순서를 바꿔요. 눈 감은 사진은 스튜디오에서 합성할 수 있어서 점수에 넣지 않고 표시만 해요.
+처음 가중치는 사진 종류(웨딩과 스냅, 여행, 행사와 모임, 아이와 가족, 기타)마다 달라요. 결정이 20건쯤 쌓이면 고르는 사람의 결정으로 로지스틱 회귀를 다시 맞추고 남은 사진 순서를 바꿔요. 눈 감은 사진은 기본으로 점수를 깎아요. 웨딩 촬영처럼 작가가 눈을 합성해 준다면 설정에서 끄면 되고, 그때는 표시만 해요.
 
 ### 내 컴퓨터에서 실행
 
