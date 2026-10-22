@@ -15,8 +15,14 @@ const FACE_MODEL_BASE = './vendor/face-api/model/';
 const NIMA_MANIFEST_URL = './vendor/nima/nima-aesthetic.json';
 const NIMA_WEIGHTS_URL = './vendor/nima/nima-aesthetic.bin';
 const EXIFR_URL = './vendor/exifr/lite.esm.mjs';
+// MediaPipe Face Landmarker: 눈 감음과 웃음을 정밀하게 본다 (눈 감은 사진 감점을 켰을 때만 받는다)
+const MEDIAPIPE_URL = './vendor/mediapipe/vision_bundle.mjs';
+const MEDIAPIPE_WASM_LOADER_URL = './vendor/mediapipe/wasm/vision_wasm_internal.js';
+const MEDIAPIPE_WASM_BINARY_URL = './vendor/mediapipe/wasm/vision_wasm_internal.wasm';
+const FACE_LANDMARKER_URL = './vendor/mediapipe/face_landmarker.task';
 // 분석 전에 받는 모델. 사용자가 무엇을 받는지 알 수 있게 용도(purposeKey)를 함께 보여준다.
 // bytes는 진행 막대 계산용 파일 크기 (모델 파일을 바꾸면 같이 고친다)
+// onlyWhen: 이 설정이 켜져 있을 때만 받는다
 const MODEL_DOWNLOADS = [
   { purposeKey: 'modelPurposeFaces', files: [
     { url: FACE_API_URL, bytes: 1333462 },
@@ -34,6 +40,12 @@ const MODEL_DOWNLOADS = [
   { purposeKey: 'modelPurposeAesthetic', files: [
     { url: NIMA_MANIFEST_URL, bytes: 4873 },
     { url: NIMA_WEIGHTS_URL, bytes: 6434472 },
+  ] },
+  { purposeKey: 'modelPurposeEyes', onlyWhen: 'penalizeClosedEyes', files: [
+    { url: MEDIAPIPE_URL, bytes: 156139 },
+    { url: MEDIAPIPE_WASM_LOADER_URL, bytes: 334128 },
+    { url: MEDIAPIPE_WASM_BINARY_URL, bytes: 13519922 },
+    { url: FACE_LANDMARKER_URL, bytes: 3758596 },
   ] },
 ];
 // 통계 서버는 이 판에서 쓰지 않는다. 나중에 붙이려면 주소를 넣고 index.html의 CSP connect-src에도 추가해야 한다
@@ -56,6 +68,10 @@ const EYE_CLOSED_EAR = 0.21;              // 두 눈 모두 이보다 작으면 
 const EYE_CHECK_MIN_FACE_PX = 60;         // 얼굴이 이보다 작으면 눈을 판정하지 않음
 const EYE_CHECK_MAX_YAW = 0.22;           // 고개가 이보다 돌아가 있으면 눈을 판정하지 않음 (옆얼굴)
 const EYE_CHECK_MIN_CONFIDENCE = 0.6;     // 얼굴 검출 확신이 이보다 낮으면 눈을 판정하지 않음
+const EYE_BLINK_CLOSED = 0.5;             // 정밀 모델의 eyeBlinkLeft, eyeBlinkRight가 둘 다 이 이상이면 눈 감음
+const EYE_MESH_MIN_FACE_PX = 40;          // 정밀 모델로 볼 얼굴의 최소 높이 (분석용 크기 기준)
+const EYE_MESH_MAX_FACES = 6;             // 사진마다 정밀 모델로 볼 큰 얼굴 수
+const EYE_MESH_CROP = 1.8;                // 얼굴 상자의 이 배수만큼 잘라서 넘긴다
 const FOCUS_GRID = 4;                     // 초점 부분을 찾으려고 사진을 4x4 칸으로 나눈다
 const FOCUS_TOP_TILES = 3;                // 가장 선명한 3칸 평균을 '초점 맞은 부분 선명도'로 쓴다
 const SIMILAR_HASH_DISTANCE = 12;       // dHash 차이가 이 이하면 바로 비슷한 컷
@@ -70,7 +86,7 @@ const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시�
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
 const CACHE_VERSION = 'v5';             // 분석 방식이 바뀌면 올린다 (v5: 같은 사람 알아보기, 미적 점수)
-const APP_VERSION = 'v10';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
+const APP_VERSION = 'v11';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
 const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
 const DARK_RETRY_LUMINANCE = 100;        // 평균 밝기가 이보다 어두운데 얼굴을 못 찾으면 밝게 보정해서 한 번 더 찾는다
 const DARK_RETRY_THRESHOLD = 0.35;       // 다시 찾을 때의 검출 기준 (기본 0.45보다 조금 너그럽게)
@@ -434,6 +450,12 @@ const aestheticCanvas = document.createElement('canvas'); // 모델 입력 224x2
 aestheticCanvas.width = AESTHETIC_INPUT; aestheticCanvas.height = AESTHETIC_INPUT;
 const aestheticContext = aestheticCanvas.getContext('2d');
 
+// 눈 감음 정밀 모델(MediaPipe Face Landmarker) 상태 (분석 정보에 보여준다)
+let eyeLandmarker = null;
+const eyeEngine = { status: 'off', faces: 0, ms: 0 }; // status: ready | failed | off, faces: 이번에 정밀 모델에 넘긴 얼굴 수, ms: 그 시간 합
+const eyeCropCanvas = document.createElement('canvas'); // 얼굴 둘레를 잘라낸 사본
+const eyeCropContext = eyeCropCanvas.getContext('2d');
+
 const megabytes = (bytes) => (bytes / 1_000_000).toFixed(1);
 // 분석 전에 모델 파일을 받는다. "로딩 중"이 아니라 무엇을 위한 모델인지, 얼마나 받았는지 보여준다.
 // 받은 파일은 서비스 워커가 기기에 보관해서 다음부터는 바로 넘어간다.
@@ -478,9 +500,12 @@ async function loadLibraries() {
   try { exifReader = (await import(EXIFR_URL)).default; } catch { exifReader = null; }
   aestheticModel = null;
   aestheticEngine.status = 'off';
+  eyeLandmarker?.close();
+  eyeLandmarker = null;
+  eyeEngine.status = 'off';
   if (state.skipFaceAnalysis) return;
   try {
-    await downloadModels(MODEL_DOWNLOADS);
+    await downloadModels(MODEL_DOWNLOADS.filter((group) => !group.onlyWhen || state.settings[group.onlyWhen]));
   } catch (error) {
     // 미리 받기가 실패해도 아래에서 각 모델을 직접 불러 본다
     console.warn('model download failed', error);
@@ -524,6 +549,26 @@ async function loadLibraries() {
   } catch (error) {
     console.warn('aesthetic model load failed', error);
     aestheticEngine.status = 'failed';
+  }
+  // 눈 감음 정밀 모델: 눈 감은 사진 감점을 켰을 때만. 실패하면 face-api 랜드마크로 눈 모양을 본다
+  if (state.settings.penalizeClosedEyes) {
+    try {
+      const { FaceLandmarker } = await import(MEDIAPIPE_URL);
+      eyeLandmarker = await FaceLandmarker.createFromOptions({
+        wasmLoaderPath: new URL(MEDIAPIPE_WASM_LOADER_URL, location.href).href,
+        wasmBinaryPath: new URL(MEDIAPIPE_WASM_BINARY_URL, location.href).href,
+      }, {
+        baseOptions: { modelAssetPath: new URL(FACE_LANDMARKER_URL, location.href).href, delegate: 'CPU' },
+        runningMode: 'IMAGE',
+        numFaces: 1,
+        outputFaceBlendshapes: true,
+      });
+      eyeEngine.status = 'ready';
+    } catch (error) {
+      console.warn('face landmarker load failed', error);
+      eyeLandmarker = null;
+      eyeEngine.status = 'failed';
+    }
   }
 }
 // 미적 점수를 지금 낼 수 있는지: 그래픽 가속(WebGL)이 없으면 장당 1~2초라 건너뛴다
@@ -725,6 +770,7 @@ async function analyzeFaces(gray, smooth, width, height, noiseFloor, meanLuminan
     if (detections.length) { faceEngine.darkRetryHits++; detectionCanvas = retryCanvas; }
   }
   const descriptors = await faceDescriptors(detectionCanvas, detections, height);
+  const blendshapes = faceBlendshapes(detectionCanvas, detections);
   return detections.map((detection, detectionIndex) => {
     const box = detection.detection.box;
     const points = detection.landmarks.positions;
@@ -736,20 +782,67 @@ async function analyzeFaces(gray, smooth, width, height, noiseFloor, meanLuminan
     const rightEar = eyeAspectRatio(points.slice(42, 48));
     const { expressions } = detection;
     const faceLight = luminanceStats(gray, width, box.x, box.y, box.x + box.width, box.y + box.height);
+    // 정밀 모델이 얼굴을 찾았으면 눈 감음과 웃음을 그것으로 본다. 못 찾았으면 눈 모양(EAR)으로
+    const mesh = blendshapes.get(detectionIndex);
+    const eyesJudged = Boolean(mesh) || canJudgeEyes;
     return {
       box: { x: box.x / width, y: box.y / height, w: box.width / width, h: box.height / height },
       isMainFace: box.height / height >= MAIN_FACE_MIN_HEIGHT,
       sharpness: Math.max(0, laplacianVariance(smooth, width, height, box.x, box.y, box.x + box.width, box.y + box.height) - noiseFloor), // 노이즈가 만든 가짜 선명도는 뺀다
       luminance: faceLight.mean,
-      smile: expressions.happy ?? 0,
+      smile: mesh ? ((expressions.happy ?? 0) + mesh.smile) / 2 : expressions.happy ?? 0,
       negative: (expressions.sad ?? 0) + (expressions.angry ?? 0) + (expressions.fearful ?? 0) + (expressions.disgusted ?? 0),
       // 두 눈 모두 감겨 보여야 눈 감음 (한쪽만이면 윙크나 각도 문제일 가능성이 크다)
-      eyesClosed: canJudgeEyes && leftEar < EYE_CLOSED_EAR && rightEar < EYE_CLOSED_EAR,
-      eyesJudged: canJudgeEyes,
+      eyesClosed: mesh
+        ? mesh.blinkLeft >= EYE_BLINK_CLOSED && mesh.blinkRight >= EYE_BLINK_CLOSED
+        : canJudgeEyes && leftEar < EYE_CLOSED_EAR && rightEar < EYE_CLOSED_EAR,
+      eyesJudged,
+      eyeMethod: mesh ? 'mesh' : eyesJudged ? 'ear' : null, // 눈을 무엇으로 판정했는지 (분석 정보용)
       cutAtEdge: box.x < 2 || box.y < 2 || box.x + box.width > width - 2 || box.y + box.height > height - 2,
       descriptor: descriptors.get(detectionIndex) ?? null, // 누구인지 나타내는 128개 숫자 (큰 얼굴 몇 개만)
     };
   });
+}
+
+// 큰 얼굴 몇 개마다 둘레를 잘라 정밀 모델에 넘기고 눈 감음, 웃음 값을 받는다.
+// 반환: 검출 순번에서 {blinkLeft, blinkRight, smile}로 (정밀 모델이 없거나 얼굴을 못 찾으면 빠진다)
+function faceBlendshapes(sourceCanvas, detections) {
+  const result = new Map();
+  if (!eyeLandmarker) return result;
+  const chosen = detections
+    .map((detection, index) => ({ box: detection.detection.box, index }))
+    .filter(({ box }) => box.height >= EYE_MESH_MIN_FACE_PX)
+    .sort((left, right) => right.box.height - left.box.height)
+    .slice(0, EYE_MESH_MAX_FACES);
+  for (const { box, index } of chosen) {
+    const left = Math.max(0, Math.floor(box.x + box.width / 2 - (box.width * EYE_MESH_CROP) / 2));
+    const top = Math.max(0, Math.floor(box.y + box.height / 2 - (box.height * EYE_MESH_CROP) / 2));
+    const right = Math.min(sourceCanvas.width, Math.ceil(box.x + box.width / 2 + (box.width * EYE_MESH_CROP) / 2));
+    const bottom = Math.min(sourceCanvas.height, Math.ceil(box.y + box.height / 2 + (box.height * EYE_MESH_CROP) / 2));
+    eyeCropCanvas.width = right - left; eyeCropCanvas.height = bottom - top;
+    eyeCropContext.drawImage(sourceCanvas, left, top, right - left, bottom - top, 0, 0, right - left, bottom - top);
+    try {
+      const startedAt = performance.now();
+      const detected = eyeLandmarker.detect(eyeCropCanvas);
+      eyeEngine.ms += performance.now() - startedAt;
+      eyeEngine.faces++;
+      const categories = detected.faceBlendshapes?.[0]?.categories;
+      const nose = detected.faceLandmarks?.[0]?.[1]; // 코끝
+      if (!categories || !nose) continue;
+      // 잘라낸 영역에 다른 사람 얼굴이 함께 들어가 그쪽을 찾았으면 쓰지 않는다
+      const noseX = left + nose.x * eyeCropCanvas.width, noseY = top + nose.y * eyeCropCanvas.height;
+      if (noseX < box.x || noseX > box.x + box.width || noseY < box.y || noseY > box.y + box.height) continue;
+      const score = (name) => categories.find((category) => category.categoryName === name)?.score ?? 0;
+      result.set(index, {
+        blinkLeft: score('eyeBlinkLeft'),
+        blinkRight: score('eyeBlinkRight'),
+        smile: (score('mouthSmileLeft') + score('mouthSmileRight')) / 2,
+      });
+    } catch (error) {
+      console.warn('face landmarker failed', error);
+    }
+  }
+  return result;
 }
 
 // 큰 얼굴 몇 개만 골라 '누구인지' 특징(128차원)을 계산한다. 반환: 검출 순번에서 특징 배열로
@@ -777,8 +870,8 @@ async function faceDescriptors(sourceCanvas, detections, imageHeight) {
 
 async function analyzeOne(photo) {
   const file = await getPhotoFile(photo);
-  // 얼굴 분석, 미적 점수를 했는지에 따라 따로 보관한다 (나중에 더 할 수 있게 되면 다시 분석)
-  const cacheKey = `cache:${CACHE_VERSION}:${photo.relPath}|${file.size}|${file.lastModified}|${faceApi ? 'face' : 'basic'}${canScoreAesthetic() ? '+aesthetic' : ''}`;
+  // 얼굴 분석, 미적 점수, 눈 감음 정밀 모델을 썼는지에 따라 따로 보관한다 (나중에 더 할 수 있게 되면 다시 분석)
+  const cacheKey = `cache:${CACHE_VERSION}:${photo.relPath}|${file.size}|${file.lastModified}|${faceApi ? 'face' : 'basic'}${canScoreAesthetic() ? '+aesthetic' : ''}${eyeLandmarker ? '+eyes' : ''}`;
   const cached = await dbGet(cacheKey);
   if (cached) {
     Object.assign(photo, { takenAt: cached.takenAt, width: cached.width, height: cached.height, analysis: cached.analysis });
@@ -2133,6 +2226,15 @@ function diagnosticsText() {
   if (analyzedWithFaces.length) lines.push(t('diagFaces', { found: photosWithFaces, total: analyzedWithFaces.length }));
   if (faceEngine.darkRetries) lines.push(t('diagDark', { hits: faceEngine.darkRetryHits, tries: faceEngine.darkRetries }));
   // 같은 사람 알아보기와 미적 점수
+  if (analyzedWithFaces.length) {
+    const judgedFaces = analyzedWithFaces.flatMap((photo) => photo.analysis.faces).filter((face) => face.eyesJudged);
+    lines.push(t('diagEyes', {
+      mesh: judgedFaces.filter((face) => face.eyeMethod === 'mesh').length,
+      ear: judgedFaces.filter((face) => face.eyeMethod !== 'mesh').length,
+      status: eyeEngine.status,
+      msPerFace: eyeEngine.faces ? Math.round(eyeEngine.ms / eyeEngine.faces) : null,
+    }));
+  }
   if (analyzedWithFaces.length) lines.push(t('diagPeople', { people: state.people.filter((person) => person.photoIds.size >= 2).length, cast: effectiveCastKeys().length }));
   const aestheticCount = state.photos.filter((photo) => photo.analysis?.aesthetic).length;
   lines.push(aestheticCount ? t('diagAesthetic', { scored: aestheticCount, total: state.photos.length })
@@ -2475,6 +2577,6 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
 }
 // 진단용: ?debug=1 이면 콘솔에서 상태를 볼 수 있게 한다 (사진 데이터는 이 기기 안에만 있다)
 if (new URLSearchParams(location.search).get('debug') === '1') {
-  window.momentSelectDebug = { APP_VERSION, state, faceEngine, aestheticEngine, hashDistance, correlation, looksSimilar, similarKeptPhotos, scoreAccuracy, trainingPairs, learningEvidence, effectiveCastKeys, firstPassQueue, distillQueue, isLastKeptOfScene, activeModel, diagnosticsText, get probeUnitKey() { return probeUnitKey; } };
+  window.momentSelectDebug = { APP_VERSION, state, faceEngine, aestheticEngine, eyeEngine, hashDistance, correlation, looksSimilar, similarKeptPhotos, scoreAccuracy, trainingPairs, learningEvidence, effectiveCastKeys, firstPassQueue, distillQueue, isLastKeptOfScene, activeModel, diagnosticsText, get probeUnitKey() { return probeUnitKey; } };
 }
 applyLanguage();
