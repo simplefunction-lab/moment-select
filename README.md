@@ -10,7 +10,7 @@ Swipe through hundreds of photos and keep the ones you want. Built for the day t
 
 - Photos are read and analyzed in the browser. Nothing is uploaded.
 - Face detection, face recognition, the aesthetic model, fonts and icons ship with the app. A Content Security Policy blocks every request to another origin, so the page cannot send anything out even by mistake.
-- The models (about 15 MB) download once, the first time you analyze photos, with a note saying what each one is for. After that the app works offline.
+- The models (about 15 MB, plus about 18 MB for the closed-eye model when closed-eye scoring is on) download once, the first time you analyze photos, with a note saying what each one is for. After that the app works offline.
 
 ## How it works
 
@@ -28,6 +28,7 @@ Each photo gets ten values between 0 and 1: subject sharpness, sharpness of the 
 
 - **Aesthetic score:** NIMA (MobileNet), trained on about 250,000 rated photos from the AVA dataset ([idealo/image-quality-assessment](https://github.com/idealo/image-quality-assessment), Apache 2.0). It runs with TensorFlow.js and is skipped on devices without graphics acceleration, where it would take one to two seconds per photo.
 - **Main people:** faces are grouped by person with face-api's face recognition model. The people who appear most often are preselected (two for weddings), and you can change them under Main people.
+- **Closed eyes and smiles:** when closed-eye scoring is on, each large face (up to six per photo) also goes through MediaPipe Face Landmarker (Apache 2.0). A face counts as eyes closed when both `eyeBlinkLeft` and `eyeBlinkRight` are 0.5 or higher, and the smile value averages face-api's happy score with MediaPipe's mouth-smile scores. If MediaPipe finds no face, or the setting is off, eyes are judged from the shape of face-api's 68 landmarks (eye aspect ratio). Analysis details under Scoring show which method judged how many faces.
 
 Starting weights depend on the photo type (wedding, travel, events, family, other). The model then learns from the person picking:
 
@@ -59,7 +60,7 @@ npx serve .
 | `i18n.js` | Korean and English text |
 | `styles.css` | Layout and theme |
 | `sw.js` | Service worker that caches the app for offline use |
-| `vendor/` | face-api and its models, the NIMA model, exifr, subset fonts and icons ([licenses](vendor/LICENSES.txt)) |
+| `vendor/` | face-api and its models, the NIMA model, MediaPipe Face Landmarker, exifr, subset fonts and icons ([licenses](vendor/LICENSES.txt)) |
 
 ---
 
@@ -73,7 +74,7 @@ npx serve .
 
 - 사진은 브라우저 안에서 읽고 분석해요. 어디에도 올리지 않아요.
 - 얼굴 분석, 같은 사람 알아보기, 미적 점수 모델과 글꼴, 아이콘을 앱과 함께 배포해요. 콘텐츠 보안 정책(CSP)이 다른 출처로 가는 요청을 모두 막아서, 실수로라도 밖으로 보낼 수 없어요.
-- 모델(약 15MB)은 처음 분석할 때 한 번만 받아요. 받는 동안 어떤 용도의 모델인지 보여줘요. 그다음부터는 인터넷 없이도 동작해요.
+- 모델(약 15MB, 눈 감은 사진 감점을 켜면 눈 감음 모델 약 18MB 추가)은 처음 분석할 때 한 번만 받아요. 받는 동안 어떤 용도의 모델인지 보여줘요. 그다음부터는 인터넷 없이도 동작해요.
 
 ### 사용 흐름
 
@@ -91,6 +92,7 @@ npx serve .
 
 - **보기 좋음:** AVA 데이터셋의 사진 평점 약 25만 장으로 학습된 NIMA(MobileNet) 모델이에요([idealo/image-quality-assessment](https://github.com/idealo/image-quality-assessment), Apache 2.0). TensorFlow.js로 돌리고, 그래픽 가속이 없는 기기에서는 장당 1~2초가 걸려서 건너뛰어요.
 - **주인공:** face-api의 얼굴 인식 모델로 같은 사람끼리 묶어요. 가장 자주 나온 사람을 미리 골라두고(웨딩은 2명), '주인공'에서 바꿀 수 있어요.
+- **눈 감음과 웃음:** 눈 감은 사진 감점을 켜면 큰 얼굴(사진마다 최대 6개)을 MediaPipe Face Landmarker(Apache 2.0)로도 봐요. `eyeBlinkLeft`와 `eyeBlinkRight`가 둘 다 0.5 이상이면 눈 감음이고, 웃음은 face-api의 웃는 표정 값과 MediaPipe의 입꼬리 값을 평균해요. MediaPipe가 얼굴을 못 찾거나 설정이 꺼져 있으면 face-api 랜드마크 68개로 눈 모양(EAR)을 봐요. 점수 기준 아래 분석 정보에서 어느 방식으로 몇 개 얼굴을 판정했는지 볼 수 있어요.
 
 처음 가중치는 사진 종류(웨딩과 스냅, 여행, 행사와 모임, 아이와 가족, 기타)마다 달라요. 그다음부터는 고르는 사람에게서 배워요.
 

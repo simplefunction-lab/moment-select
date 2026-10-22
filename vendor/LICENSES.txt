@@ -13,3 +13,8 @@ NIMA 미적 점수 모델 (idealo/image-quality-assessment, MobileNet aesthetic,
   Apache License 2.0 - Copyright 2018 idealo internet GmbH - https://github.com/idealo/image-quality-assessment
   변경 사항: 배치 정규화를 앞 합성곱에 접어 넣고 가중치를 float16으로 바꿔 nima-aesthetic.bin/json으로 저장
   (변환 스크립트: vendor/nima/export.py). 모델 구조와 학습된 값은 바꾸지 않았다.
+MediaPipe Tasks Vision (@mediapipe/tasks-vision 1.1.1) - Apache License 2.0 - Copyright The MediaPipe Authors - https://github.com/google-ai-edge/mediapipe
+  vision_bundle.mjs, wasm/vision_wasm_internal.js, wasm/vision_wasm_internal.wasm을 바꾸지 않고 복사
+MediaPipe Face Landmarker 모델 (face_landmarker.task, float16) - Apache License 2.0 - https://ai.google.dev/edge/mediapipe/solutions/vision/face_landmarker
+  https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task 에서 받은 그대로
+  (sha256 64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff)
