@@ -2,15 +2,40 @@
    모먼트 셀렉
    - 폴더의 원본을 그대로 두고 File System Access API로 읽고 쓴다
    - 얼굴 검출은 브라우저 안에서 face-api(TensorFlow.js)로 돌린다
-   - 점수는 7개 항목의 로지스틱 모델. 처음엔 사진 종류별 기본값, 고르는 동안 사람마다 다시 학습
+   - 점수는 10개 항목(선명도, 노출, 표정, 눈 뜸, 미적 점수, 주인공 등)의 로지스틱 모델
+   - 처음엔 사진 종류별 기본값, 고르는 동안 남김/뺌과 비슷한 컷 비교로 사람마다 다시 학습
    ===================================================================== */
 
 import { t, getLanguage, setLanguage, applyStaticText, presetText, featureLabel, categoryLabel, allExportPrefixes, isDefaultName } from './i18n.js';
+import { buildAestheticModel, scoreAesthetic, AESTHETIC_INPUT } from './aesthetic.js';
 
 // ---------- 라이브러리 위치 (모두 앱과 함께 배포, 외부 요청 없음) ----------
 const FACE_API_URL = './vendor/face-api/face-api.esm.js';
 const FACE_MODEL_BASE = './vendor/face-api/model/';
+const NIMA_MANIFEST_URL = './vendor/nima/nima-aesthetic.json';
+const NIMA_WEIGHTS_URL = './vendor/nima/nima-aesthetic.bin';
 const EXIFR_URL = './vendor/exifr/lite.esm.mjs';
+// 분석 전에 받는 모델. 사용자가 무엇을 받는지 알 수 있게 용도(purposeKey)를 함께 보여준다.
+// bytes는 진행 막대 계산용 파일 크기 (모델 파일을 바꾸면 같이 고친다)
+const MODEL_DOWNLOADS = [
+  { purposeKey: 'modelPurposeFaces', files: [
+    { url: FACE_API_URL, bytes: 1333462 },
+    { url: `${FACE_MODEL_BASE}tiny_face_detector_model-weights_manifest.json`, bytes: 3219 },
+    { url: `${FACE_MODEL_BASE}tiny_face_detector_model.bin`, bytes: 193321 },
+    { url: `${FACE_MODEL_BASE}face_landmark_68_model-weights_manifest.json`, bytes: 8485 },
+    { url: `${FACE_MODEL_BASE}face_landmark_68_model.bin`, bytes: 356840 },
+    { url: `${FACE_MODEL_BASE}face_expression_model-weights_manifest.json`, bytes: 6980 },
+    { url: `${FACE_MODEL_BASE}face_expression_model.bin`, bytes: 329468 },
+  ] },
+  { purposeKey: 'modelPurposePeople', files: [
+    { url: `${FACE_MODEL_BASE}face_recognition_model-weights_manifest.json`, bytes: 19615 },
+    { url: `${FACE_MODEL_BASE}face_recognition_model.bin`, bytes: 6444032 },
+  ] },
+  { purposeKey: 'modelPurposeAesthetic', files: [
+    { url: NIMA_MANIFEST_URL, bytes: 4873 },
+    { url: NIMA_WEIGHTS_URL, bytes: 6434472 },
+  ] },
+];
 // 통계 서버는 이 판에서 쓰지 않는다. 나중에 붙이려면 주소를 넣고 index.html의 CSP connect-src에도 추가해야 한다
 const PRIOR_ENDPOINT = '';   // GET ?preset=wedding 에서 {weights:{항목:값}, bias} 를 받아 기본값으로 쓴다
 const COLLECT_ENDPOINT = ''; // POST 로 익명 학습 데이터를 보낸다
@@ -44,29 +69,42 @@ const SCORE_SCALE = 8;                    // 가중합(0~1)을 로지스틱 모�
 const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시작
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
-const CACHE_VERSION = 'v4';             // 분석 방식이 바뀌면 올린다 (v4: 얼굴 검출 교차 확인, 어두운 사진 재시도)
-const APP_VERSION = 'v9';               // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
+const CACHE_VERSION = 'v5';             // 분석 방식이 바뀌면 올린다 (v5: 같은 사람 알아보기, 미적 점수)
+const APP_VERSION = 'v10';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
 const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
 const DARK_RETRY_LUMINANCE = 100;        // 평균 밝기가 이보다 어두운데 얼굴을 못 찾으면 밝게 보정해서 한 번 더 찾는다
 const DARK_RETRY_THRESHOLD = 0.35;       // 다시 찾을 때의 검출 기준 (기본 0.45보다 조금 너그럽게)
 const NOISE_LAPLACIAN_GAIN = 0.40625;      // 노이즈 표준편차 σ가 흐린 라플라시안 분산에 더하는 양은 약 0.406σ² (커널 계수 제곱합)
+// 같은 사람 알아보기 (주인공)
+const DESCRIPTOR_MAX_FACES = 4;          // 사진마다 큰 얼굴 몇 개까지 '누구인지' 계산할지 (얼굴 인식은 무거워서)
+const SAME_PERSON_DISTANCE = 0.55;       // 얼굴 특징 거리(유클리드)가 이보다 가까우면 같은 사람 (face-api 권장 0.6보다 조금 엄격)
+const CAST_MIN_SHARE = 0.08;             // 얼굴 있는 사진 중 이 비율 이상 나와야 주인공 후보로 자동 선택
+const CAST_MIN_PHOTOS = 3;               // 그리고 최소 이만큼은 나와야 한다
+const CAST_CANDIDATES = 8;               // 주인공 고르기 창에 보여줄 사람 수
+// 장면 (줄이기 단계에서 장면이 통째로 사라지지 않게)
+const SCENE_GAP_MS = 10 * 60_000;        // 촬영 시각이 이만큼 벌어지면 다른 장면
+// 취향을 빨리 배우려고 애매한 사진을 섞어 보여주기 (능동 학습)
+const PROBE_EVERY = 5;                   // 1차 셀렉에서 이 순번마다 한 번 (5번째, 10번째, ...)
+const PROBE_UNTIL_ACTIONS = 40;          // 1차 셀렉에서 이만큼 결정하면 그만 섞는다 (비교 쌍은 묶음 하나에 여러 개가 쌓여 기준으로 쓰지 않는다)
+const LEARN_MIN_PAIRS = 8;               // 비슷한 컷 비교 쌍만으로 학습을 시작할 수 있는 최소 쌍 수
 
 // ---------- 점수 항목과 사진 종류별 기본 가중치 ----------
 // 가중치는 출발값일 뿐이며 검증된 값이 아니다. 고르는 동안 사람마다 학습해서 바뀐다
-const FEATURE_KEYS = ['subjectSharp', 'focusSharp', 'exposure', 'expression', 'smile', 'framing', 'clean', 'eyesOpen'];
+// aesthetic: 미적 점수 (NIMA, 이 폴더 안 백분위), cast: 주인공이 나온 정도
+const FEATURE_KEYS = ['subjectSharp', 'focusSharp', 'exposure', 'expression', 'smile', 'framing', 'clean', 'eyesOpen', 'aesthetic', 'cast'];
 const EYES_OPEN_WEIGHT = 0.15; // '눈 감은 사진 감점'을 켰을 때 눈 뜸 항목의 기본 비중 (나머지 항목과 합쳐 1로 맞춘다)
-// 사진 종류 이름과 설명 문구는 i18n.js에 있다
+// 사진 종류 이름과 설명 문구는 i18n.js에 있다. castCount: 주인공을 자동으로 몇 명 고를지
 const PRESETS = {
-  wedding: { crowdMin: 5,
-    weights: { subjectSharp: .34, focusSharp: .10, exposure: .20, expression: .16, smile: .05, framing: .10, clean: .05 } },
-  travel: { crowdMin: 5,
-    weights: { subjectSharp: .24, focusSharp: .22, exposure: .22, expression: .10, smile: .08, framing: .06, clean: .08 } },
-  event: { crowdMin: 6,
-    weights: { subjectSharp: .30, focusSharp: .08, exposure: .17, expression: .15, smile: .18, framing: .07, clean: .05 } },
-  family: { crowdMin: 5,
-    weights: { subjectSharp: .36, focusSharp: .08, exposure: .16, expression: .12, smile: .18, framing: .06, clean: .04 } },
-  other: { crowdMin: 5,
-    weights: { subjectSharp: .28, focusSharp: .18, exposure: .20, expression: .12, smile: .08, framing: .07, clean: .07 } },
+  wedding: { crowdMin: 5, castCount: 2,
+    weights: { subjectSharp: .34, focusSharp: .10, exposure: .20, expression: .16, smile: .05, framing: .10, clean: .05, aesthetic: .14, cast: .14 } },
+  travel: { crowdMin: 5, castCount: 1,
+    weights: { subjectSharp: .24, focusSharp: .22, exposure: .22, expression: .10, smile: .08, framing: .06, clean: .08, aesthetic: .20, cast: .06 } },
+  event: { crowdMin: 6, castCount: 1,
+    weights: { subjectSharp: .30, focusSharp: .08, exposure: .17, expression: .15, smile: .18, framing: .07, clean: .05, aesthetic: .12, cast: .10 } },
+  family: { crowdMin: 5, castCount: 2,
+    weights: { subjectSharp: .36, focusSharp: .08, exposure: .16, expression: .12, smile: .18, framing: .06, clean: .04, aesthetic: .12, cast: .14 } },
+  other: { crowdMin: 5, castCount: 1,
+    weights: { subjectSharp: .28, focusSharp: .18, exposure: .20, expression: .12, smile: .08, framing: .07, clean: .07, aesthetic: .16, cast: .06 } },
 };
 // 가중합 w·x 를 로지스틱 모델 sigmoid(bias + θ·x) 로 옮긴다. 순서는 그대로 유지된다
 function modelFromWeights(weights, source, penalizeClosedEyes) {
@@ -100,6 +138,9 @@ const state = {
   skippedFileCount: 0,
   analysisDone: false,
   skipFaceAnalysis: false,
+  people: [],                    // 같은 사람끼리 묶은 얼굴 [{key, faces:[{photoId, faceIndex}], photoIds:Set}] 많이 나온 순
+  castKeys: null,                // 주인공으로 고른 사람 key 목록 (null이면 아직 안 정해서 자동으로 고른다)
+  scenes: new Map(),             // 사진 id에서 장면 번호로 (촬영 시각 간격으로 나눔)
 };
 
 // ---------- 작은 도우미 ----------
@@ -169,6 +210,7 @@ function saveProjectNow() {
   return dbSet(`project:${state.folderName}`, {
     settings: state.settings, reviewers: state.reviewers, models: state.models, rounds: state.rounds,
     dividerSeen: state.dividerSeen, sentSampleCount: state.sentSampleCount, expandedGroups: [...state.expandedGroups],
+    castKeys: state.castKeys,
   });
 }
 function saveProjectSoon() {
@@ -243,6 +285,7 @@ async function startWithEntries(folderName, imageEntries) {
   applySettingsFromForm();
   state.folderName = folderName;
   const savedProject = await dbGet(`project:${folderName}`);
+  state.castKeys = null;
   if (savedProject && savedProject.settings?.preset === state.settings.preset) {
     // 같은 폴더, 같은 사진 종류로 다시 열면 결정과 학습 결과를 이어서 쓴다
     state.reviewers.a.decisions = savedProject.reviewers?.a?.decisions ?? {};
@@ -254,6 +297,7 @@ async function startWithEntries(folderName, imageEntries) {
     state.dividerSeen = savedProject.dividerSeen ?? state.dividerSeen;
     state.sentSampleCount = savedProject.sentSampleCount ?? state.sentSampleCount;
     state.expandedGroups = new Set(savedProject.expandedGroups ?? []);
+    state.castKeys = savedProject.castKeys ?? null;
   }
   state.priorModel = await loadPriorModel();
   state.photos = imageEntries.map((entry) => ({
@@ -261,7 +305,7 @@ async function startWithEntries(folderName, imageEntries) {
     handle: entry.handle ?? null, file: entry.file ?? null,
     thumbUrl: '', takenAt: null, width: 0, height: 0,
     analysis: null,       // 분석 원값
-    features: null,       // 점수 항목 7개 (0~1)
+    features: null,       // 점수 항목 10개 (0~1, FEATURE_KEYS 순서)
     score: 0,             // 0~100
     groupId: null, groupBest: false, recommended: false,
   }));
@@ -383,9 +427,67 @@ const forcedFaceBackend = new URLSearchParams(location.search).get('faceBackend'
 const retryCanvas = document.createElement('canvas'); // 어두운 사진을 밝게 보정한 사본
 const retryContext = retryCanvas.getContext('2d', { willReadFrequently: true });
 
+// 미적 점수 모델 상태 (분석 정보에 보여준다)
+let aestheticModel = null;
+const aestheticEngine = { status: 'off', scored: 0 }; // status: ready | failed | off, scored: 점수를 낸 사진 수
+const aestheticCanvas = document.createElement('canvas'); // 모델 입력 224x224 사본
+aestheticCanvas.width = AESTHETIC_INPUT; aestheticCanvas.height = AESTHETIC_INPUT;
+const aestheticContext = aestheticCanvas.getContext('2d');
+
+const megabytes = (bytes) => (bytes / 1_000_000).toFixed(1);
+// 분석 전에 모델 파일을 받는다. "로딩 중"이 아니라 무엇을 위한 모델인지, 얼마나 받았는지 보여준다.
+// 받은 파일은 서비스 워커가 기기에 보관해서 다음부터는 바로 넘어간다.
+async function downloadModels(groups) {
+  const totalBytes = groups.flatMap((group) => group.files).reduce((sum, file) => sum + file.bytes, 0);
+  let finishedBytes = 0; // 다 받은 파일들의 크기 합
+  $('#analyze-title').textContent = t('preparingTitle');
+  $('#analyze-note').textContent = t('modelNote');
+  $('#analyze-note').classList.remove('hidden');
+  let lastPaintAt = 0; // 진행 막대를 마지막으로 그린 시각
+  for (const group of groups) {
+    const showProgress = (currentBytes, force = false) => {
+      // 조각마다 그리면 막대의 CSS 애니메이션이 계속 처음부터 다시 시작돼 실제보다 뒤처진다. 0.1초에 한 번만 그린다
+      if (!force && performance.now() - lastPaintAt < 100) return;
+      lastPaintAt = performance.now();
+      $('#analyze-meter').style.width = `${Math.min(100, (currentBytes / totalBytes) * 100)}%`;
+      $('#analyze-text').textContent = t('modelProgress', { purpose: t(group.purposeKey), loaded: megabytes(currentBytes), total: megabytes(totalBytes) });
+    };
+    for (const file of group.files) {
+      showProgress(finishedBytes, true);
+      const response = await fetch(file.url);
+      if (!response.ok) throw new Error(`${file.url} ${response.status}`);
+      if (response.body?.getReader) {
+        const reader = response.body.getReader();
+        let fileBytes = 0;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          fileBytes += value.length;
+          showProgress(finishedBytes + Math.min(fileBytes, file.bytes));
+        }
+      } else {
+        await response.arrayBuffer();
+      }
+      finishedBytes += file.bytes;
+    }
+  }
+  $('#analyze-meter').style.width = '100%';
+}
+
 async function loadLibraries() {
   try { exifReader = (await import(EXIFR_URL)).default; } catch { exifReader = null; }
+  aestheticModel = null;
+  aestheticEngine.status = 'off';
   if (state.skipFaceAnalysis) return;
+  try {
+    await downloadModels(MODEL_DOWNLOADS);
+  } catch (error) {
+    // 미리 받기가 실패해도 아래에서 각 모델을 직접 불러 본다
+    console.warn('model download failed', error);
+  }
+  $('#analyze-title').textContent = t('analyzeTitle');
+  $('#analyze-note').classList.add('hidden');
+  $('#analyze-meter').style.width = '0%';
   try {
     $('#analyze-text').textContent = t('loadingModel');
     const module = await import(FACE_API_URL);
@@ -407,6 +509,38 @@ async function loadLibraries() {
     console.warn('face-api load failed', error);
     faceApi = null;
     showToast(t('modelFailed'));
+    return;
+  }
+  // 같은 사람 알아보기 모델: 실패해도 나머지 분석은 그대로 한다
+  try { await faceApi.nets.faceRecognitionNet.loadFromUri(FACE_MODEL_BASE); } catch (error) { console.warn('face recognition load failed', error); }
+  // 미적 점수 모델 (face-api 안의 TensorFlow.js로 돌린다)
+  try {
+    const [manifest, weightBuffer] = await Promise.all([
+      fetch(NIMA_MANIFEST_URL).then((response) => response.json()),
+      fetch(NIMA_WEIGHTS_URL).then((response) => response.arrayBuffer()),
+    ]);
+    aestheticModel = buildAestheticModel(faceApi.tf, manifest, weightBuffer);
+    aestheticEngine.status = 'ready';
+  } catch (error) {
+    console.warn('aesthetic model load failed', error);
+    aestheticEngine.status = 'failed';
+  }
+}
+// 미적 점수를 지금 낼 수 있는지: 그래픽 가속(WebGL)이 없으면 장당 1~2초라 건너뛴다
+const canScoreAesthetic = () => Boolean(aestheticModel && faceApi && faceApi.tf.getBackend() === 'webgl');
+
+async function aestheticOfAnalysisCanvas() {
+  if (!canScoreAesthetic()) return null;
+  // 학습 때(Keras 기본)처럼 정사각형으로 늘려 최근접 방식으로 줄인다. 부드럽게 줄이면 점수가 1점 넘게 달라진다
+  aestheticContext.imageSmoothingEnabled = false;
+  aestheticContext.drawImage(analysisCanvas, 0, 0, AESTHETIC_INPUT, AESTHETIC_INPUT);
+  try {
+    const { mean, std } = await scoreAesthetic(aestheticModel, aestheticCanvas);
+    aestheticEngine.scored++;
+    return { mean: Math.round(mean * 1000) / 1000, std: Math.round(std * 1000) / 1000 };
+  } catch (error) {
+    console.warn('aesthetic scoring failed', error);
+    return null;
   }
 }
 
@@ -581,15 +715,17 @@ function brightenIntoRetryCanvas(meanLuminance) {
 
 async function analyzeFaces(gray, smooth, width, height, noiseFloor, meanLuminance) {
   if (!faceApi) return null;
+  let detectionCanvas = analysisCanvas; // 얼굴을 찾은 그림 (어두우면 밝힌 사본)
   let detections = await detectFaces(analysisCanvas);
   if (!detections.length && meanLuminance < DARK_RETRY_LUMINANCE) {
     // 밤 사진처럼 어두우면 얼굴을 놓치기 쉬워서, 밝게 보정한 사본으로 한 번 더 찾는다
     faceEngine.darkRetries++;
     brightenIntoRetryCanvas(meanLuminance);
     detections = await detectFaces(retryCanvas, DARK_RETRY_THRESHOLD);
-    if (detections.length) faceEngine.darkRetryHits++;
+    if (detections.length) { faceEngine.darkRetryHits++; detectionCanvas = retryCanvas; }
   }
-  return detections.map((detection) => {
+  const descriptors = await faceDescriptors(detectionCanvas, detections, height);
+  return detections.map((detection, detectionIndex) => {
     const box = detection.detection.box;
     const points = detection.landmarks.positions;
     // 고개 돌림: 코끝이 두 눈 바깥 끝의 가운데에서 얼마나 벗어났는지 (눈 사이 거리 대비)
@@ -611,13 +747,38 @@ async function analyzeFaces(gray, smooth, width, height, noiseFloor, meanLuminan
       eyesClosed: canJudgeEyes && leftEar < EYE_CLOSED_EAR && rightEar < EYE_CLOSED_EAR,
       eyesJudged: canJudgeEyes,
       cutAtEdge: box.x < 2 || box.y < 2 || box.x + box.width > width - 2 || box.y + box.height > height - 2,
+      descriptor: descriptors.get(detectionIndex) ?? null, // 누구인지 나타내는 128개 숫자 (큰 얼굴 몇 개만)
     };
   });
 }
 
+// 큰 얼굴 몇 개만 골라 '누구인지' 특징(128차원)을 계산한다. 반환: 검출 순번에서 특징 배열로
+async function faceDescriptors(sourceCanvas, detections, imageHeight) {
+  const result = new Map();
+  if (!faceApi?.nets.faceRecognitionNet.isLoaded || !detections.length) return result;
+  const chosen = detections
+    .map((detection, index) => ({ detection, index }))
+    .filter(({ detection }) => detection.detection.box.height / imageHeight >= MAIN_FACE_MIN_HEIGHT)
+    .sort((left, right) => right.detection.detection.box.height - left.detection.detection.box.height)
+    .slice(0, DESCRIPTOR_MAX_FACES);
+  if (!chosen.length) return result;
+  try {
+    // 랜드마크로 기울기를 바로잡은 얼굴 영역을 잘라서 계산한다 (face-api가 내부에서 하는 방식과 같다)
+    const faceCanvases = await faceApi.extractFaces(sourceCanvas, chosen.map(({ detection }) => detection.alignedRect));
+    for (let order = 0; order < chosen.length; order++) {
+      const descriptor = await faceApi.computeFaceDescriptor(faceCanvases[order]);
+      result.set(chosen[order].index, Array.from(descriptor, (value) => Math.round(value * 1000) / 1000));
+    }
+  } catch (error) {
+    console.warn('face descriptor failed', error);
+  }
+  return result;
+}
+
 async function analyzeOne(photo) {
   const file = await getPhotoFile(photo);
-  const cacheKey = `cache:${CACHE_VERSION}:${photo.relPath}|${file.size}|${file.lastModified}|${faceApi ? 'face' : 'basic'}`;
+  // 얼굴 분석, 미적 점수를 했는지에 따라 따로 보관한다 (나중에 더 할 수 있게 되면 다시 분석)
+  const cacheKey = `cache:${CACHE_VERSION}:${photo.relPath}|${file.size}|${file.lastModified}|${faceApi ? 'face' : 'basic'}${canScoreAesthetic() ? '+aesthetic' : ''}`;
   const cached = await dbGet(cacheKey);
   if (cached) {
     Object.assign(photo, { takenAt: cached.takenAt, width: cached.width, height: cached.height, analysis: cached.analysis });
@@ -627,8 +788,10 @@ async function analyzeOne(photo) {
   let takenAt = null;
   if (exifReader) {
     try {
-      const exif = await exifReader.parse(file, ['DateTimeOriginal', 'CreateDate']);
-      const date = exif?.DateTimeOriginal ?? exif?.CreateDate;
+      // exifr lite는 태그 이름 배열만 넘기면 오류가 나서(그동안 촬영 시각을 못 읽었다) 블록별로 지정한다.
+      // 촬영 시각이 없으면 IFD0의 수정 시각(ModifyDate)을 대신 쓴다
+      const exif = await exifReader.parse(file, { ifd0: ['ModifyDate'], exif: ['DateTimeOriginal', 'CreateDate'], gps: false, interop: false, ifd1: false });
+      const date = exif?.DateTimeOriginal ?? exif?.CreateDate ?? exif?.ModifyDate;
       takenAt = date instanceof Date && !isNaN(date) ? date.getTime() : null;
     } catch { takenAt = null; }
   }
@@ -652,6 +815,7 @@ async function analyzeOne(photo) {
     hash: (prepareSmallCopy(), differenceHash()),
     tiny: tinyLumaVector(),
     faces: await analyzeFaces(gray, smooth, width, height, noiseFloor, light.mean), // null이면 얼굴 분석을 하지 않음
+    aesthetic: await aestheticOfAnalysisCanvas(), // {mean, std} 1~10점, null이면 계산하지 않음
   };
   photo.takenAt = takenAt;
   photo.thumbUrl = URL.createObjectURL(thumbBlob);
@@ -724,6 +888,8 @@ async function analyzeAll() {
     state.skippedFileCount += unreadable.length;
   }
   if (!state.photos.length) { showToast(t('noReadable')); setView('setup'); return; }
+  buildPeople();
+  buildScenes();
   computeFeatures();
   rescoreAll();
   buildSimilarGroups();
@@ -771,10 +937,16 @@ function computeFeatures() {
   const focusRank = percentileRanker(usable.map((photo) => Math.log1p(photo.analysis.focusSharpness)));
   const faceRank = percentileRanker(usable.flatMap((photo) => mainFacesOf(photo).map((face) => Math.log1p(face.sharpness))));
   const noiseRank = percentileRanker(usable.map((photo) => photo.analysis.noise));
+  // 미적 점수도 촬영마다 수준이 달라서 이 폴더 안의 순위로 쓴다. 점수가 없는 사진은 중립값 0.5
+  const aestheticRank = percentileRanker(usable.filter((photo) => photo.analysis.aesthetic).map((photo) => photo.analysis.aesthetic.mean));
+  const castKeys = new Set(effectiveCastKeys());
   for (const photo of state.photos) {
     if (photo.analysis.failed) { photo.features = null; continue; }
     const faces = mainFacesOf(photo);
     const focusSharp = focusRank(Math.log1p(photo.analysis.focusSharpness));
+    const aesthetic = photo.analysis.aesthetic ? aestheticRank(photo.analysis.aesthetic.mean) : 0.5;
+    // 주인공: 고른 사람 중 몇 명이 이 사진에 나왔는지 (주인공을 안 골랐으면 모두 0.5라 순서에 영향 없음)
+    const cast = castKeys.size ? castPresentIn(photo, castKeys).size / castKeys.size : 0.5;
     // 눈 뜸: 눈을 판정할 수 있었던 얼굴 중 눈 뜬 비율. 감점을 끄면 모든 사진이 1이라 순서에 영향이 없다
     const judgedFaces = faces.filter((face) => face.eyesJudged);
     const eyesOpen = state.settings.penalizeClosedEyes && judgedFaces.length ? 1 - judgedFaces.filter((face) => face.eyesClosed).length / judgedFaces.length : 1;
@@ -789,12 +961,110 @@ function computeFeatures() {
         framing: faces.filter((face) => !face.cutAtEdge).length / faces.length,
         clean: 1 - noiseRank(photo.analysis.noise),
         eyesOpen,
+        aesthetic,
+        cast,
       };
     } else {
       // 인물이 없으면 인물 항목은 초점 부분으로 대신하고, 표정과 구도는 중립값 0.5
-      photo.features = { subjectSharp: focusSharp, focusSharp, exposure: globalExposure, expression: 0.5, smile: 0.5, framing: 0.5, clean: 1 - noiseRank(photo.analysis.noise), eyesOpen: 1 };
+      photo.features = { subjectSharp: focusSharp, focusSharp, exposure: globalExposure, expression: 0.5, smile: 0.5, framing: 0.5, clean: 1 - noiseRank(photo.analysis.noise), eyesOpen: 1, aesthetic, cast };
     }
   }
+}
+
+/* =====================================================================
+   같은 사람 알아보기 (주인공)
+   - 얼굴 특징(128차원)이 가까운 얼굴끼리 한 사람으로 묶는다 (중심점과의 거리, 탐욕 방식)
+   - 한 사진 안의 두 얼굴은 같은 사람으로 묶지 않는다
+   - 사람 key는 그 사람의 첫 얼굴(사진 id#얼굴 순번)이라 같은 폴더를 다시 열어도 같다
+   ===================================================================== */
+const personByFace = new Map(); // `${사진 id}#${얼굴 순번}`에서 사람 key로
+let autoCastKeys = [];          // 자동으로 고른 주인공 (사용자가 아직 안 골랐을 때 쓴다)
+const effectiveCastKeys = () => state.castKeys ?? autoCastKeys;
+const faceRef = (photoId, faceIndex) => `${photoId}#${faceIndex}`;
+const euclidean = (left, right) => { let sum = 0; for (let index = 0; index < left.length; index++) sum += (left[index] - right[index]) ** 2; return Math.sqrt(sum); };
+
+function buildPeople() {
+  personByFace.clear();
+  const people = []; // {key, centroid, faces:[{photoId, faceIndex}], photoIds:Set}
+  const orderedPhotos = [...state.photos].sort((left, right) => left.id.localeCompare(right.id, undefined, { numeric: true }));
+  for (const photo of orderedPhotos) {
+    const faces = photo.analysis?.faces ?? [];
+    const usedInPhoto = new Set(); // 이 사진에서 이미 배정된 사람
+    faces.forEach((face, faceIndex) => {
+      if (!face.descriptor) return;
+      let nearest = null, nearestDistance = Infinity;
+      for (const person of people) {
+        if (usedInPhoto.has(person)) continue;
+        const distance = euclidean(face.descriptor, person.centroid);
+        if (distance < nearestDistance) { nearest = person; nearestDistance = distance; }
+      }
+      if (!nearest || nearestDistance >= SAME_PERSON_DISTANCE) {
+        nearest = { key: faceRef(photo.id, faceIndex), centroid: Float64Array.from(face.descriptor), faces: [], photoIds: new Set() };
+        people.push(nearest);
+      } else {
+        // 중심점을 새 얼굴까지 포함한 평균으로 옮긴다
+        const count = nearest.faces.length;
+        for (let index = 0; index < nearest.centroid.length; index++) nearest.centroid[index] = (nearest.centroid[index] * count + face.descriptor[index]) / (count + 1);
+      }
+      nearest.faces.push({ photoId: photo.id, faceIndex });
+      nearest.photoIds.add(photo.id);
+      usedInPhoto.add(nearest);
+      personByFace.set(faceRef(photo.id, faceIndex), nearest.key);
+    });
+  }
+  state.people = people.sort((left, right) => right.photoIds.size - left.photoIds.size || left.key.localeCompare(right.key));
+  // 사용자가 고른 주인공 중 이번에 없는 사람은 뺀다 (모두 없어지면 자동 선택으로 돌아간다)
+  if (state.castKeys) {
+    const existing = new Set(state.people.map((person) => person.key));
+    state.castKeys = state.castKeys.filter((key) => existing.has(key));
+    if (!state.castKeys.length) state.castKeys = null;
+  }
+  // 자동 선택: 얼굴 있는 사진 중 충분히 자주 나온 사람을 사진 종류별 인원만큼
+  const photosWithDescriptors = state.photos.filter((photo) => (photo.analysis?.faces ?? []).some((face) => face.descriptor)).length;
+  const minimumPhotos = Math.max(CAST_MIN_PHOTOS, Math.ceil(photosWithDescriptors * CAST_MIN_SHARE));
+  autoCastKeys = state.people.filter((person) => person.photoIds.size >= minimumPhotos).slice(0, preset().castCount).map((person) => person.key);
+}
+
+// 이 사진에 나온 주인공 key 집합
+function castPresentIn(photo, castKeys) {
+  const present = new Set();
+  (photo.analysis?.faces ?? []).forEach((face, faceIndex) => {
+    const personKey = personByFace.get(faceRef(photo.id, faceIndex));
+    if (personKey && castKeys.has(personKey)) present.add(personKey);
+  });
+  return present;
+}
+
+/* =====================================================================
+   장면: 촬영 시각이 SCENE_GAP_MS 넘게 벌어지면 다른 장면으로 본다
+   - 줄이기 단계에서 어떤 장면의 마지막 남은 사진은 뒤로 미뤄서 장면이 통째로 사라지지 않게 한다
+   - 촬영 시각이 없는 사진이 많으면(메신저로 받은 사진 등) 장면을 나누지 않는다
+   ===================================================================== */
+function buildScenes() {
+  state.scenes = new Map();
+  const timed = state.photos.filter((photo) => photo.takenAt).sort((left, right) => left.takenAt - right.takenAt);
+  if (timed.length < state.photos.length * 0.8) return;
+  let sceneNumber = 0;
+  timed.forEach((photo, index) => {
+    if (index && photo.takenAt - timed[index - 1].takenAt > SCENE_GAP_MS) sceneNumber++;
+    state.scenes.set(photo.id, sceneNumber);
+  });
+}
+const sceneCount = () => new Set(state.scenes.values()).size;
+// 장면마다 지금 남긴 사진 수
+function keptCountByScene() {
+  const counts = new Map();
+  for (const id of keepIds()) {
+    const scene = state.scenes.get(id);
+    if (scene !== undefined) counts.set(scene, (counts.get(scene) ?? 0) + 1);
+  }
+  return counts;
+}
+// 이 사진이 자기 장면에서 남은 마지막 한 장인지 (장면이 하나뿐이면 의미가 없어서 false)
+function isLastKeptOfScene(photo, counts = keptCountByScene()) {
+  if (sceneCount() < 2) return false;
+  const scene = state.scenes.get(photo.id);
+  return scene !== undefined && statusOf(photo.id) === 'keep' && counts.get(scene) === 1;
 }
 
 const featureVector = (photo) => FEATURE_KEYS.map((key) => photo.features[key]);
@@ -826,43 +1096,95 @@ function trainingSamples(reviewerKey) {
   return samples;
 }
 
+// 비슷한 컷끼리 고른 결과: "이긴 사진이 진 사진보다 낫다"는 쌍. 장면과 인물이 같아서 품질과 취향 차이만 남는다
+// 진 사진의 마지막 결정 기록(lostTo)에서 꺼낸다. 되돌리면 기록이 사라지므로 쌍도 함께 사라진다
+function trainingPairs(reviewerKey) {
+  const pairs = [];
+  for (const [photoId, decision] of Object.entries(state.reviewers[reviewerKey].decisions)) {
+    const lastEntry = decision.log?.[decision.log.length - 1];
+    if (decision.status !== 'drop' || !lastEntry?.lostTo) continue;
+    const loser = state.photoById.get(photoId);
+    if (!loser?.features) continue;
+    const loserVector = featureVector(loser);
+    for (const { id: winnerId } of lastEntry.lostTo) {
+      const winner = state.photoById.get(winnerId);
+      if (!winner?.features) continue;
+      pairs.push({ difference: featureVector(winner).map((value, index) => value - loserVector[index]) });
+    }
+  }
+  return pairs;
+}
+const learningEvidence = (reviewerKey) => trainingSamples(reviewerKey).length + trainingPairs(reviewerKey).length;
+
+// 낱장 결정(남김/뺌)은 로지스틱 회귀, 비교 쌍은 Bradley-Terry(이긴 쪽 점수가 높을 확률)로 함께 맞춘다
 function trainModel(reviewerKey) {
   const samples = trainingSamples(reviewerKey);
+  const pairs = trainingPairs(reviewerKey);
   const keepCount = samples.filter((sample) => sample.label === 1).length;
-  if (samples.length < LEARN_MIN_DECISIONS || keepCount < LEARN_MIN_PER_CLASS || samples.length - keepCount < LEARN_MIN_PER_CLASS) return false;
+  const samplesReady = samples.length >= LEARN_MIN_DECISIONS && keepCount >= LEARN_MIN_PER_CLASS && samples.length - keepCount >= LEARN_MIN_PER_CLASS;
+  const pairsReady = pairs.length >= LEARN_MIN_PAIRS;
+  if (!samplesReady && !pairsReady) return false;
+  const usedSamples = samplesReady ? samples : []; // 남김/뺌이 한쪽으로 쏠려 있으면 낱장 결정은 쓰지 않는다
+  const evidenceCount = usedSamples.length + pairs.length;
   const prior = state.priorModel;
   const theta = [...prior.theta];
   let bias = prior.bias;
   const regularization = 0.01, learningRate = 1.5;
+  const dot = (vector) => theta.reduce((sum, weight, index) => sum + weight * vector[index], 0);
   for (let iteration = 0; iteration < 1500; iteration++) {
     const thetaGradient = new Array(theta.length).fill(0);
     let biasGradient = 0;
-    for (const { vector, label } of samples) {
-      const error = sigmoid(bias + theta.reduce((sum, weight, index) => sum + weight * vector[index], 0)) - label;
+    for (const { vector, label } of usedSamples) {
+      const error = sigmoid(bias + dot(vector)) - label;
       for (let index = 0; index < theta.length; index++) thetaGradient[index] += error * vector[index];
       biasGradient += error;
     }
-    for (let index = 0; index < theta.length; index++) {
-      theta[index] -= learningRate * (thetaGradient[index] / samples.length + 2 * regularization * (theta[index] - prior.theta[index]));
+    for (const { difference } of pairs) {
+      const error = sigmoid(dot(difference)) - 1; // 이긴 쪽이 이길 확률을 1에 가깝게 (기준점 bias는 쌍에서 상쇄된다)
+      for (let index = 0; index < theta.length; index++) thetaGradient[index] += error * difference[index];
     }
-    bias -= learningRate * (biasGradient / samples.length);
+    for (let index = 0; index < theta.length; index++) {
+      theta[index] -= learningRate * (thetaGradient[index] / evidenceCount + 2 * regularization * (theta[index] - prior.theta[index]));
+    }
+    if (usedSamples.length) bias -= learningRate * (biasGradient / usedSamples.length);
   }
-  state.models[reviewerKey] = { theta, bias, source: 'learned', trainedOn: samples.length };
+  state.models[reviewerKey] = { theta, bias, source: 'learned', trainedOn: evidenceCount, decisions: usedSamples.length, pairs: pairs.length };
   return true;
 }
 
 function maybeRetrain() {
   if (!state.settings.useScore) return;
   const reviewerKey = state.currentReviewer;
-  const sampleCount = trainingSamples(reviewerKey).length;
+  const evidence = learningEvidence(reviewerKey);
   const lastTrained = state.models[reviewerKey]?.trainedOn ?? 0;
-  if (sampleCount - lastTrained < LEARN_EVERY && lastTrained !== 0) return;
-  if (lastTrained === 0 && sampleCount < LEARN_MIN_DECISIONS) return;
+  if (lastTrained !== 0 && evidence - lastTrained < LEARN_EVERY) return;
   if (!trainModel(reviewerKey)) return;
   rescoreAll();
   buildUnits();
-  if (lastTrained === 0) showToast(t('learnedToast', sampleCount), [], 5500);
+  if (lastTrained === 0) showToast(t('learnedToast', evidence), [], 5500);
   maybeSendStats();
+}
+
+// 점수가 실제 결정을 얼마나 맞혔는지 (결정할 때 보이던 점수로 계산하므로 학습에 쓴 데이터로 자기 채점하지 않는다)
+//  auc: 남긴 사진이 뺀 사진보다 점수가 높았던 비율 (0.5면 무작위, 1이면 완벽)
+//  pairHits/pairTotal: 비슷한 컷 비교에서 고른 사진의 점수가 더 높았던 횟수
+function scoreAccuracy(reviewerKey) {
+  const keptScores = [], droppedScores = [];
+  let pairHits = 0, pairTotal = 0;
+  for (const decision of Object.values(state.reviewers[reviewerKey].decisions)) {
+    const lastEntry = decision.log?.[decision.log.length - 1];
+    if (!lastEntry || typeof lastEntry.score !== 'number' || lastEntry.stage === 'first-bulk') continue;
+    (decision.status === 'keep' ? keptScores : droppedScores).push(lastEntry.score);
+    for (const winner of lastEntry.lostTo ?? []) {
+      if (typeof winner.score !== 'number') continue;
+      pairTotal++;
+      pairHits += winner.score > lastEntry.score ? 1 : winner.score === lastEntry.score ? 0.5 : 0;
+    }
+  }
+  let concordant = 0;
+  for (const keptScore of keptScores) for (const droppedScore of droppedScores) concordant += keptScore > droppedScore ? 1 : keptScore === droppedScore ? 0.5 : 0;
+  const auc = keptScores.length && droppedScores.length ? concordant / (keptScores.length * droppedScores.length) : null;
+  return { auc, decisions: keptScores.length + droppedScores.length, pairHits, pairTotal };
 }
 
 /* ---------- 익명 통계 보내기 (서버 주소가 있고 동의했을 때만) ---------- */
@@ -982,17 +1304,26 @@ function buildUnits() {
    ===================================================================== */
 function emptyUndo() { return { reviewerKey: state.currentReviewer, previous: [], roundMarks: [] }; }
 
-function recordDecisions(changes, stage) {
+// changes: [{id, status}], preferences: 비슷한 컷끼리 고른 결과 [{winnerId, loserId}] (쌍 비교 학습용)
+function recordDecisions(changes, stage, preferences = []) {
   const now = Date.now();
   const undoEntry = emptyUndo();
+  const winnersByLoser = new Map(); // 진 사진 id에서 이긴 사진 [{id, score}]로
+  for (const { winnerId, loserId } of preferences) {
+    if (!winnersByLoser.has(loserId)) winnersByLoser.set(loserId, []);
+    winnersByLoser.get(loserId).push({ id: winnerId, score: state.photoById.get(winnerId)?.score });
+  }
   for (const { id, status } of changes) {
     const previousDecision = decisionOf(id);
     undoEntry.previous.push({ id, decision: previousDecision ? structuredClone(previousDecision) : null });
+    // score: 결정할 때 보이던 점수 (점수 적중률 측정용), lostTo: 이 사진 대신 고른 비슷한 사진
+    const logEntry = { status, at: now, stage, score: state.photoById.get(id)?.score };
+    if (status === 'drop' && winnersByLoser.has(id)) logEntry.lostTo = winnersByLoser.get(id);
     reviewer().decisions[id] = {
       status, at: now,
       // 뺐던 사진을 다시 남기면 그 시각을 기록한다
       addedAt: status === 'keep' ? (previousDecision?.status === 'drop' ? now : previousDecision?.addedAt) : undefined,
-      log: [...(previousDecision?.log ?? []), { status, at: now, stage }],
+      log: [...(previousDecision?.log ?? []), logEntry],
     };
   }
   state.undoStack.push(undoEntry);
@@ -1041,6 +1372,33 @@ function bringPriorityFirst(items, idsOf) {
   return [...priority, ...items.filter((item) => !priority.includes(item))];
 }
 
+// 1차 셀렉에서 사용자가 결정한 횟수 (한 번에 여러 장을 고른 묶음도 1회)
+function firstPassActionCount() {
+  const actionTimes = new Set();
+  for (const decision of Object.values(reviewer().decisions)) {
+    for (const entry of decision.log ?? []) if (entry.stage?.startsWith('first') && entry.stage !== 'first-bulk') actionTimes.add(entry.at);
+  }
+  return actionTimes.size;
+}
+// 취향 확인용 사진: 학습 초반에 PROBE_EVERY번째마다, 점수가 가운데쯤이라 모델이 가장 헷갈리는 사진(낱장 또는 묶음)을 끼워 보여준다.
+// 점수 높은 사진만 보면 "무엇을 빼는지"를 배울 수 없어서 학습이 느리다
+let probeUnitKey = null;
+function pickProbeUnit(pendingUnits) {
+  probeUnitKey = null;
+  if (!state.settings.useScore) return null;
+  const actionCount = firstPassActionCount();
+  if (actionCount >= PROBE_UNTIL_ACTIONS || (actionCount + 1) % PROBE_EVERY !== 0) return null;
+  if (pendingUnits.length < 2) return null;
+  const sortedScores = state.units.map((unit) => unit.score).sort((left, right) => left - right);
+  const medianScore = sortedScores[Math.floor(sortedScores.length / 2)];
+  const probe = pendingUnits.reduce((best, unit) => {
+    const gap = Math.abs(unit.score - medianScore), bestGap = Math.abs(best.score - medianScore);
+    return gap < bestGap || (gap === bestGap && unit.key < best.key) ? unit : best;
+  });
+  probeUnitKey = probe.key;
+  return probe;
+}
+
 function firstPassQueue() {
   const pending = state.units.filter((unit) => unit.ids.some((id) => !statusOf(id)) && unit.ids.some((id) => matchesCategory(state.photoById.get(id))));
   if (!state.settings.useScore) return bringPriorityFirst(pending, (unit) => unit.ids);
@@ -1052,13 +1410,18 @@ function firstPassQueue() {
     if (!state.dividerSeen[state.currentReviewer]) queue.push({ type: 'divider', key: 'divider', ids: [], count: others.length });
     queue.push(...others);
   }
+  const probe = recommended.length ? pickProbeUnit(pending) : null; // 추천 사진을 다 본 뒤에는 섞지 않는다
+  if (probe && queue[0] !== probe) queue.splice(queue.indexOf(probe), 1), queue.unshift(probe);
   return bringPriorityFirst(queue, (unit) => unit.ids);
 }
 function distillQueue() {
   const seenIds = state.rounds[state.currentReviewer].distill;
+  const counts = keptCountByScene();
+  const sceneProtected = new Set(keepIds().filter((id) => isLastKeptOfScene(state.photoById.get(id), counts))); // 장면의 마지막 한 장
+  // 점수 낮은 순, 단 장면의 마지막 남은 사진은 맨 뒤로 미룬다
   const queue = keepIds().map((id) => state.photoById.get(id))
     .filter((photo) => !seenIds.includes(photo.id) && matchesCategory(photo))
-    .sort((left, right) => left.score - right.score);
+    .sort((left, right) => (sceneProtected.has(left.id) - sceneProtected.has(right.id)) || left.score - right.score);
   return bringPriorityFirst(queue, (photo) => [photo.id]);
 }
 function rescueQueue() {
@@ -1219,6 +1582,9 @@ function photoTagsHtml(photo, { showAdded }) {
   if (hasClosedEyes(photo)) tags.push(`<span class="tag flag"><i class="ph ph-eye-closed"></i> ${t(state.settings.preset === 'wedding' && !state.settings.penalizeClosedEyes ? 'tagEyesWedding' : 'tagEyes')}</span>`);
   const decision = decisionOf(photo.id);
   if (showAdded && decision?.addedAt) tags.push(`<span class="tag added">${t('tagReAdded', formatTime(decision.addedAt))}</span>`);
+  // 취향 확인용으로 끼워 넣은 사진: 점수가 낮은 사진이 왜 일찍 나왔는지 알려준다
+  if (state.view === 'first' && probeUnitKey === photo.id) tags.push(`<span class="tag">${t('tagProbe')}</span>`);
+  if (state.view === 'distill' && isLastKeptOfScene(photo)) tags.push(`<span class="tag">${t('tagLastInScene')}</span>`);
   return tags.join('');
 }
 
@@ -1226,6 +1592,7 @@ function renderPickView() {
   const mode = state.view;
   $('#compare-wrap').classList.toggle('hidden', mode !== 'distill');
   $('#criteria-button').classList.toggle('hidden', !state.settings.useScore);
+  $('#cast-button').classList.toggle('hidden', !state.settings.useScore || !state.people.length);
   $('#compare-input').checked = state.compareMode;
   const stage = $('#stage');
   const keepCount = keepIds().length;
@@ -1465,6 +1832,7 @@ function renderBurst(stage, unit) {
     <div class="burst">
       <div class="burst-head">
         <h2>${t('burstTitle', groupMembers.length)}${outsideKept.length ? t('burstWithKept', Math.min(4, outsideKept.length)) : ''}</h2>
+        ${probeUnitKey === unit.key ? `<span class="tag">${t('tagProbe')}</span>` : ''}
         <span class="hint">${t('burstHint')}${state.settings.useScore ? t('burstHintScored') : ''}</span>
         <span class="spacer"></span>
         <button class="button" id="burst-expand">${t('burstExpand')}</button>
@@ -1497,7 +1865,10 @@ function renderBurst(stage, unit) {
     const changes = members
       .filter((photo) => groupIdSet.has(photo.id) || !burstSelection.selected.has(photo.id))
       .map((photo) => ({ id: photo.id, status: burstSelection.selected.has(photo.id) ? 'keep' : 'drop' }));
-    recordDecisions(changes, 'first-burst');
+    // 고른 사진은 안 고른 사진마다 한 번씩 이긴 것으로 기록 (다 뺐으면 비교 정보가 없다)
+    const winnerIds = members.filter((photo) => burstSelection.selected.has(photo.id)).map((photo) => photo.id);
+    const loserIds = changes.filter((change) => change.status === 'drop').map((change) => change.id);
+    recordDecisions(changes, 'first-burst', winnerIds.flatMap((winnerId) => loserIds.map((loserId) => ({ winnerId, loserId }))));
     burstSelection = { key: null, selected: new Set() };
     render();
   };
@@ -1564,21 +1935,21 @@ function renderKeptCompare(stage, currentPhoto, keptLookalikes, stageName) {
     shot.onclick = () => openViewer(photo); // 누르면 크게 보기 (결정은 아래 버튼으로)
   });
   let deciding = false; // 표시를 그리는 동안 들어온 두 번째 입력은 무시한다 (같은 결정이 두 번 기록되지 않게)
-  const finish = (changes, keepMarkOn) => {
+  const finish = (changes, keepMarkOn, preferences = []) => {
     if (deciding) return;
     deciding = true;
     if (keepMarkOn !== null) { const mark = cloneMark('keep'); shots[keepMarkOn].append(mark); mark.classList.add('drawn'); }
     setTimeout(() => {
-      const undoEntry = changes.length ? recordDecisions(changes, `${stageName}-kept-compare`) : emptyUndo();
+      const undoEntry = changes.length ? recordDecisions(changes, `${stageName}-kept-compare`, preferences) : emptyUndo();
       if (!changes.length) state.undoStack.push(undoEntry);
       if (stageName === 'rescue') markRoundSeen('rescue', [currentPhoto.id], undoEntry);
       render();
     }, keepMarkOn !== null ? 260 : 0);
   };
   // 왼쪽: 지금 사진 빼기. 다시 보기에서는 이미 빠진 사진이라 결정은 그대로 두고 넘어간다
-  const dropCurrent = () => finish(stageName === 'rescue' ? [] : [{ id: currentPhoto.id, status: 'drop' }], null);
+  const dropCurrent = () => finish(stageName === 'rescue' ? [] : [{ id: currentPhoto.id, status: 'drop' }], null, [{ winnerId: keptPhoto.id, loserId: currentPhoto.id }]);
   const keepBoth = () => finish([{ id: currentPhoto.id, status: 'keep' }], 0);
-  const swapToCurrent = () => finish([{ id: currentPhoto.id, status: 'keep' }, { id: keptPhoto.id, status: 'drop' }], 0);
+  const swapToCurrent = () => finish([{ id: currentPhoto.id, status: 'keep' }, { id: keptPhoto.id, status: 'drop' }], 0, [{ winnerId: currentPhoto.id, loserId: keptPhoto.id }]);
   $('#kept-single').onclick = () => { singleViewIds.add(currentPhoto.id); render(); };
   if ($('#kept-next')) $('#kept-next').onclick = () => { keptCompareCursor.index++; render(); };
   $('#controls').innerHTML = `
@@ -1615,7 +1986,7 @@ function renderCompare(stage, [leftPhoto, rightPhoto]) {
     const loser = winnerIndex === 0 ? rightPhoto : leftPhoto;
     $('.mark', shots[winnerIndex]).classList.add('drawn');
     setTimeout(() => {
-      const undoEntry = recordDecisions([{ id: loser.id, status: 'drop' }], 'distill-compare');
+      const undoEntry = recordDecisions([{ id: loser.id, status: 'drop' }], 'distill-compare', [{ winnerId: winner.id, loserId: loser.id }]);
       markRoundSeen('distill', [winner.id, loser.id], undoEntry);
       render();
     }, 260);
@@ -1647,7 +2018,7 @@ $('#criteria').addEventListener('toggle', (event) => {
   const totalPositive = model.theta.reduce((sum, weight) => sum + Math.max(0, weight), 0) || 1;
   const currentPhoto = currentPhotoOnStage();
   const sourceText = model.source === 'learned'
-    ? t('criteriaLearned', { name: escapeHtml(reviewer().name), count: model.trainedOn, every: LEARN_EVERY })
+    ? t('criteriaLearned', { name: escapeHtml(reviewer().name), decisions: model.decisions ?? model.trainedOn, pairs: model.pairs ?? 0, every: LEARN_EVERY })
     : model.source === 'server'
       ? t('criteriaServer', { preset: presetText(state.settings.preset).label, min: LEARN_MIN_DECISIONS })
       : t('criteriaPreset', { preset: presetText(state.settings.preset).label, perClass: LEARN_MIN_PER_CLASS, min: LEARN_MIN_DECISIONS });
@@ -1668,6 +2039,74 @@ $('#criteria').addEventListener('toggle', (event) => {
     $('#criteria').showPopover(); // 바뀐 비중으로 패널을 다시 그린다
   };
 });
+
+// ---------- 주인공 고르기 ----------
+// 자주 나온 얼굴을 보여주고 누르면 주인공으로 넣고 뺀다. 얼굴 사진은 썸네일에서 잘라 이 기기 안에서만 만든다
+const faceCropUrls = new Map(); // 사람 key에서 얼굴 사진 data URL로
+async function faceCropUrl(person) {
+  if (faceCropUrls.has(person.key)) return faceCropUrls.get(person.key);
+  // 가장 크게 나온 얼굴을 대표로
+  let best = null;
+  for (const { photoId, faceIndex } of person.faces) {
+    const photo = state.photoById.get(photoId);
+    const face = photo?.analysis?.faces?.[faceIndex];
+    if (face && photo.thumbUrl && (!best || face.box.h > best.face.box.h)) best = { photo, face };
+  }
+  if (!best) return '';
+  const image = new Image();
+  image.src = best.photo.thumbUrl;
+  await image.decode();
+  const { box } = best.face;
+  const side = Math.max(box.w * image.naturalWidth, box.h * image.naturalHeight) * 1.5; // 얼굴보다 조금 넓게
+  const centerX = (box.x + box.w / 2) * image.naturalWidth, centerY = (box.y + box.h / 2) * image.naturalHeight;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 112;
+  canvas.getContext('2d').drawImage(image, centerX - side / 2, centerY - side / 2, side, side, 0, 0, 112, 112);
+  const url = canvas.toDataURL('image/jpeg', 0.85);
+  faceCropUrls.set(person.key, url);
+  return url;
+}
+
+async function renderCastPanel() {
+  const panel = $('#cast');
+  const castKeys = new Set(effectiveCastKeys());
+  const candidates = state.people.slice(0, CAST_CANDIDATES);
+  const crops = await Promise.all(candidates.map((person) => faceCropUrl(person).catch(() => '')));
+  panel.innerHTML = `
+    <h2>${t('castTitle')}</h2>
+    <p class="hint source">${t(state.castKeys ? 'castHint' : 'castHintAuto')}</p>
+    <div class="cast-grid">
+      ${candidates.map((person, index) => `
+        <button class="cast-face" data-key="${escapeHtml(person.key)}" aria-pressed="${castKeys.has(person.key)}" aria-label="${t('castPersonAria', { order: index + 1, count: person.photoIds.size })}">
+          ${crops[index] ? `<img src="${crops[index]}" alt="">` : '<span class="cast-blank"></span>'}
+          <span class="num">${t('castPhotos', person.photoIds.size)}</span>
+        </button>`).join('')}
+    </div>
+    <p class="hint source">${t('castNote')}</p>`;
+  for (const button of panel.querySelectorAll('.cast-face')) {
+    button.onclick = () => {
+      const next = new Set(effectiveCastKeys());
+      if (next.has(button.dataset.key)) next.delete(button.dataset.key); else next.add(button.dataset.key);
+      applyCast([...next]);
+      button.setAttribute('aria-pressed', next.has(button.dataset.key));
+      $('.hint.source', panel).textContent = t('castHint');
+    };
+  }
+}
+$('#cast').addEventListener('toggle', (event) => { if (event.newState === 'open') renderCastPanel(); });
+
+// 주인공이 바뀌면 점수 항목과 학습을 다시 계산한다
+function applyCast(castKeys) {
+  state.castKeys = castKeys;
+  computeFeatures();
+  for (const reviewerKey of Object.keys(state.models)) {
+    if (state.models[reviewerKey] && !trainModel(reviewerKey)) state.models[reviewerKey] = null;
+  }
+  rescoreAll();
+  buildUnits();
+  saveProjectSoon();
+  render();
+}
 
 // 고르는 도중에 눈 감음 감점을 켜거나 끄면, 항목과 기본 모델을 다시 만들고 학습도 다시 한다
 function applyClosedEyesSetting(penalize) {
@@ -1693,6 +2132,18 @@ function diagnosticsText() {
   if (faceEngine.crossCheck) lines.push(t('diagCrossCheck', faceEngine.crossCheck));
   if (analyzedWithFaces.length) lines.push(t('diagFaces', { found: photosWithFaces, total: analyzedWithFaces.length }));
   if (faceEngine.darkRetries) lines.push(t('diagDark', { hits: faceEngine.darkRetryHits, tries: faceEngine.darkRetries }));
+  // 같은 사람 알아보기와 미적 점수
+  if (analyzedWithFaces.length) lines.push(t('diagPeople', { people: state.people.filter((person) => person.photoIds.size >= 2).length, cast: effectiveCastKeys().length }));
+  const aestheticCount = state.photos.filter((photo) => photo.analysis?.aesthetic).length;
+  lines.push(aestheticCount ? t('diagAesthetic', { scored: aestheticCount, total: state.photos.length })
+    : aestheticModel && faceEngine.backend !== 'webgl' ? t('diagAestheticCpu') : t('diagAestheticOff'));
+  if (sceneCount() >= 2) lines.push(t('diagScenes', sceneCount()));
+  // 점수 적중률: 결정할 때 보이던 점수로 계산 (50%면 무작위 수준)
+  if (state.settings.useScore) {
+    const accuracy = scoreAccuracy(state.currentReviewer);
+    lines.push(accuracy.auc === null ? t('diagAccuracyWait') : t('diagAccuracy', { percent: Math.round(accuracy.auc * 100), count: accuracy.decisions }));
+    if (accuracy.pairTotal) lines.push(t('diagPairAccuracy', { hits: Math.round(accuracy.pairHits), total: accuracy.pairTotal }));
+  }
   lines.push(t('diagHint'));
   return lines.map(escapeHtml).join('<br>');
 }
@@ -2024,6 +2475,6 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
 }
 // 진단용: ?debug=1 이면 콘솔에서 상태를 볼 수 있게 한다 (사진 데이터는 이 기기 안에만 있다)
 if (new URLSearchParams(location.search).get('debug') === '1') {
-  window.momentSelectDebug = { APP_VERSION, state, faceEngine, hashDistance, correlation, looksSimilar, similarKeptPhotos };
+  window.momentSelectDebug = { APP_VERSION, state, faceEngine, aestheticEngine, hashDistance, correlation, looksSimilar, similarKeptPhotos, scoreAccuracy, trainingPairs, learningEvidence, effectiveCastKeys, firstPassQueue, distillQueue, isLastKeptOfScene, activeModel, diagnosticsText, get probeUnitKey() { return probeUnitKey; } };
 }
 applyLanguage();

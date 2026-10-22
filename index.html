@@ -94,7 +94,7 @@
       <div class="field hidden" id="share-field">
         <span class="label" data-i18n="fieldShare">통계 보내기</span>
         <div class="control">
-          <label class="check"><input type="checkbox" id="share-input"><span><span data-i18n="shareCheck">점수 기준 개선에 익명 숫자 보내기</span><br><span class="hint" data-i18n="shareHint">사진, 파일 이름, 얼굴 정보는 보내지 않아요. 사진마다 점수 항목 7개의 값(0에서 1 사이 숫자)과 남김 여부, 사진 종류만 보냅니다.</span></span></label>
+          <label class="check"><input type="checkbox" id="share-input"><span><span data-i18n="shareCheck">점수 기준 개선에 익명 숫자 보내기</span><br><span class="hint" data-i18n="shareHint">사진, 파일 이름, 얼굴 정보는 보내지 않아요. 사진마다 점수 항목 값(0에서 1 사이 숫자)과 남김 여부, 사진 종류만 보냅니다.</span></span></label>
         </div>
       </div>
 
@@ -118,6 +118,7 @@
         <button class="button quiet" id="skip-faces" data-i18n="skipFaces">얼굴 분석 끄고 빨리 진행</button>
       </div>
       <div class="analyze-meter"><span id="analyze-meter"></span></div>
+      <p class="hint analyze-note hidden" id="analyze-note"></p>
       <div class="sheet" id="analyze-sheet"></div>
     </div>
   </section>
@@ -130,6 +131,7 @@
         <span class="notice" id="notice"></span>
         <span class="spacer"></span>
         <label class="check hidden" id="compare-wrap"><input type="checkbox" id="compare-input"><span data-i18n="compareToggle">두 장 나란히</span></label>
+        <button class="button quiet hidden" id="cast-button" popovertarget="cast" aria-label="주인공" data-i18n-aria="castButton"><i class="ph ph-user-focus"></i><span class="label" data-i18n="castButton">주인공</span></button>
         <button class="button quiet" id="criteria-button" popovertarget="criteria" aria-label="점수 기준" data-i18n-aria="criteriaButton"><i class="ph ph-sliders-horizontal"></i><span class="label" data-i18n="criteriaButton">점수 기준</span></button>
       </div>
       <div class="stage" id="stage"></div>
@@ -145,6 +147,7 @@
 </main>
 
 <div id="criteria" popover></div>
+<div id="cast" popover></div>
 <dialog id="viewer"><button class="button close" id="viewer-close"><i class="ph ph-x"></i><span data-i18n="viewerClose">닫기</span></button></dialog>
 <div class="toast hidden" id="toast" role="status"></div>
 

@@ -4,14 +4,19 @@
 // 받는 순서
 //   앱 코드(HTML, app.js, i18n.js, styles.css, manifest): 서버에서 먼저 받고, 안 되면 보관본
 //     인터넷이 되면 열 때마다 최신 버전이 뜬다. 신호가 약해 NETWORK_TIMEOUT_MS 안에 답이 없으면 보관본을 쓴다.
-//   vendor/(얼굴 모델, 글꼴, 아이콘)와 앱 아이콘: 보관본 먼저. 크고 거의 바뀌지 않는다.
+//   vendor/(라이브러리, 글꼴, 아이콘)와 앱 아이콘: 보관본 먼저. 거의 바뀌지 않는다.
+//   모델 파일(얼굴, 같은 사람, 미적 점수, 약 14MB): 처음 분석할 때 받아서 MODEL_CACHE에 보관한다.
+//     앱을 배포해도 지워지지 않아서 한 번만 받는다. 모델 파일 내용을 바꾸면 MODEL_CACHE 이름을 올린다.
 
-const APP_VERSION = 'v9'; // 배포할 때마다 app.js의 APP_VERSION과 같이 올린다
+const APP_VERSION = 'v10'; // 배포할 때마다 app.js의 APP_VERSION과 같이 올린다
 const CACHE_NAME = `moment-select-${APP_VERSION}`;
+const MODEL_CACHE = 'moment-select-models-1';
+const isModelFile = (url) => url.pathname.includes('/vendor/face-api/model/') || url.pathname.includes('/vendor/nima/');
 const NETWORK_TIMEOUT_MS = 4000;
 // 앱을 이루는 파일 전체 (라이브러리, 모델, 글꼴 포함)
 const APP_FILES = [
   './',
+  './aesthetic.js',
   './app.js',
   './i18n.js',
   './icons/icon-192.png',
@@ -21,12 +26,6 @@ const APP_FILES = [
   './styles.css',
   './vendor/exifr/lite.esm.mjs',
   './vendor/face-api/face-api.esm.js',
-  './vendor/face-api/model/face_expression_model-weights_manifest.json',
-  './vendor/face-api/model/face_expression_model.bin',
-  './vendor/face-api/model/face_landmark_68_model-weights_manifest.json',
-  './vendor/face-api/model/face_landmark_68_model.bin',
-  './vendor/face-api/model/tiny_face_detector_model-weights_manifest.json',
-  './vendor/face-api/model/tiny_face_detector_model.bin',
   './vendor/fonts/nanum-pen-marks-latin.woff2',
   './vendor/fonts/nanum-pen-marks.woff2',
   './vendor/fonts/pretendard-subset.woff2',
@@ -44,7 +43,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   // 이전 버전 캐시 정리
   event.waitUntil(caches.keys()
-    .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
+    .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME && key !== MODEL_CACHE).map((key) => caches.delete(key))))
     .then(() => self.clients.claim()));
 });
 
@@ -72,11 +71,24 @@ async function networkFirst(event) {
   return Promise.race([fromNetwork.catch(() => cached), timeout]);
 }
 
+// 모델 파일: 보관본이 있으면 그것을, 없으면 받아서 보관한다
+async function modelFirstFromCache(event) {
+  const cacheKey = new URL(event.request.url);
+  cacheKey.search = '';
+  const cache = await caches.open(MODEL_CACHE);
+  const cached = await cache.match(cacheKey.href);
+  if (cached) return cached;
+  const response = await fetch(event.request);
+  if (response.ok) event.waitUntil(cache.put(cacheKey.href, response.clone()));
+  return response;
+}
+
 self.addEventListener('fetch', (event) => {
   const request = event.request;
   const url = new URL(request.url);
   if (request.method !== 'GET' || url.origin !== self.location.origin) return;
   if (isAppCode(url)) { event.respondWith(networkFirst(event)); return; }
+  if (isModelFile(url)) { event.respondWith(modelFirstFromCache(event)); return; }
   // 보관한 파일이 있으면 그것을, 없으면 네트워크에서 받는다
   event.respondWith(caches.match(request, { ignoreSearch: true }).then((cached) => cached ?? fetch(request)));
 });

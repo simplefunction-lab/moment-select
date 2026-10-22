@@ -129,6 +129,8 @@
   .analyze-head { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
   .analyze-meter { height: 3px; background: var(--sunken); margin: 16px 0 20px; }
   .analyze-meter span { display: block; height: 100%; width: 0; background: var(--ink); transition: width .15s linear; }
+  /* 모델 받는 동안: 무엇을 받는지, 사진은 안 나간다는 안내 */
+  .analyze-note { margin: -8px 0 16px; max-width: 62ch; }
   .sheet { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 4px; }
   .sheet img { width: 100%; aspect-ratio: 3/2; object-fit: cover; display: block; background: var(--sunken); }
 
@@ -236,6 +238,16 @@
   #criteria .source { margin-top: 10px; }
   #criteria .diag-title { margin-top: 16px; font-size: 14px; }
   #criteria .criteria-eyes { margin-top: 12px; font-size: 13px; }
+  /* 주인공 고르기 */
+  #cast { width: min(420px, 92vw); max-height: 80dvh; overflow: auto; border: 1px solid var(--rule); border-radius: var(--radius-m); padding: 18px; background: var(--surface); color: var(--ink); box-shadow: 0 12px 32px rgba(30, 37, 35, .18); }
+  #cast::backdrop { background: transparent; }
+  #cast .source { margin-top: 10px; }
+  .cast-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+  .cast-face { display: grid; gap: 4px; justify-items: center; padding: 6px 4px; border: 1px solid transparent; border-radius: var(--radius-m); background: transparent; color: var(--ink-2); font: inherit; font-size: 12px; cursor: pointer; }
+  .cast-face img, .cast-face .cast-blank { width: 100%; aspect-ratio: 1; border-radius: 50%; object-fit: cover; background: var(--sunken); outline: 2px solid transparent; outline-offset: 2px; }
+  .cast-face[aria-pressed="true"] { color: var(--ink); font-weight: 600; }
+  .cast-face[aria-pressed="true"] img, .cast-face[aria-pressed="true"] .cast-blank { outline-color: var(--marker); }
+  .cast-face:focus-visible { border-color: var(--ink); }
 
   /* ---------- 내보내기 ---------- */
   .export { max-width: 1080px; margin: 0 auto; padding: 36px 24px 80px; }
@@ -296,8 +308,8 @@
     .filters button { flex-shrink: 0; }
     .notice { flex: 1; min-width: 0; }
     .toolbar > .spacer { display: none; }
-    #criteria-button { padding: 0 8px; }
-    #criteria-button .label { display: none; }
+    #criteria-button, #cast-button { padding: 0 8px; }
+    #criteria-button .label, #cast-button .label { display: none; }
     .stage { padding: 10px; }
     .tags .tag.path { display: none; }
     .controls { padding: 10px 12px; padding-bottom: max(10px, env(safe-area-inset-bottom)); gap: 8px; flex-wrap: nowrap; }
