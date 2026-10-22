@@ -41,7 +41,10 @@ const SCORE_SCALE = 8;                    // 가중합(0~1)을 로지스틱 모�
 const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시작
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
-const CACHE_VERSION = 'v3';
+const CACHE_VERSION = 'v4';             // 분석 방식이 바뀌면 올린다 (v4: 얼굴 검출 교차 확인, 어두운 사진 재시도)
+const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
+const DARK_RETRY_LUMINANCE = 100;        // 평균 밝기가 이보다 어두운데 얼굴을 못 찾으면 밝게 보정해서 한 번 더 찾는다
+const DARK_RETRY_THRESHOLD = 0.35;       // 다시 찾을 때의 검출 기준 (기본 0.45보다 조금 너그럽게)
 const NOISE_LAPLACIAN_GAIN = 0.40625;      // 노이즈 표준편차 σ가 흐린 라플라시안 분산에 더하는 양은 약 0.406σ² (커널 계수 제곱합)
 
 // ---------- 점수 항목과 사진 종류별 기본 가중치 ----------
@@ -353,6 +356,18 @@ const hashContext = hashCanvas.getContext('2d', { willReadFrequently: true });
 
 let faceApi = null;
 let exifReader = null;
+// 얼굴 검출 엔진 상태 (점수 기준 패널의 분석 정보에 보여준다)
+const faceEngine = {
+  backend: 'none',     // 실제로 쓰는 계산 방식: webgl(그래픽 가속) | cpu | none
+  float32: null,       // WebGL이 32비트 실수 렌더링을 지원하는지 (휴대폰 GPU 정밀도 문제를 짚어보는 단서)
+  crossCheck: null,    // WebGL과 CPU 비교 결과 {samples, webglFaces, cpuFaces, switched}
+  darkRetries: 0,      // 어두워서 밝게 보정해 다시 찾은 횟수
+  darkRetryHits: 0,    // 그렇게 해서 얼굴을 찾은 횟수
+};
+// 진단용: 주소 뒤에 ?faceBackend=cpu 를 붙이면 처음부터 CPU로 계산한다
+const forcedFaceBackend = new URLSearchParams(location.search).get('faceBackend');
+const retryCanvas = document.createElement('canvas'); // 어두운 사진을 밝게 보정한 사본
+const retryContext = retryCanvas.getContext('2d', { willReadFrequently: true });
 
 async function loadLibraries() {
   try { exifReader = (await import(EXIFR_URL)).default; } catch { exifReader = null; }
@@ -361,9 +376,13 @@ async function loadLibraries() {
     $('#analyze-text').textContent = t('loadingModel');
     const module = await import(FACE_API_URL);
     // WebGL(그래픽 가속)을 먼저 쓰고, 안 되면 CPU로. wasm 백엔드는 쓰지 않는다
-    const webglReady = await module.tf.setBackend('webgl').catch(() => false);
+    // 진단용: ?faceF16=1 이면 휴대폰 GPU처럼 16비트 정밀도로 계산하게 해서 문제를 재현한다
+    if (new URLSearchParams(location.search).get('faceF16') === '1') module.tf.env().set('WEBGL_FORCE_F16_TEXTURES', true);
+    const webglReady = forcedFaceBackend === 'cpu' ? false : await module.tf.setBackend('webgl').catch(() => false);
     if (!webglReady) await module.tf.setBackend('cpu');
     await module.tf.ready();
+    faceEngine.backend = module.tf.getBackend();
+    try { faceEngine.float32 = faceEngine.backend === 'webgl' ? module.tf.env().getBool('WEBGL_RENDER_FLOAT32_CAPABLE') : null; } catch { faceEngine.float32 = null; }
     await Promise.all([
       module.nets.tinyFaceDetector.loadFromUri(FACE_MODEL_BASE),
       module.nets.faceLandmark68Net.loadFromUri(FACE_MODEL_BASE),
@@ -487,12 +506,39 @@ function eyeAspectRatio(eyePoints) {
   return (distance(eyePoints[1], eyePoints[5]) + distance(eyePoints[2], eyePoints[4])) / (2 * distance(eyePoints[0], eyePoints[3]));
 }
 
-async function analyzeFaces(gray, smooth, width, height, noiseFloor) {
-  if (!faceApi) return null;
-  const detections = await faceApi
-    .detectAllFaces(analysisCanvas, new faceApi.TinyFaceDetectorOptions({ inputSize: 512, scoreThreshold: 0.45 }))
+function detectFaces(canvas, scoreThreshold = 0.45) {
+  return faceApi
+    .detectAllFaces(canvas, new faceApi.TinyFaceDetectorOptions({ inputSize: 512, scoreThreshold }))
     .withFaceLandmarks()
     .withFaceExpressions();
+}
+
+// 어두운 사진을 감마 보정으로 밝혀 retryCanvas에 그린다 (평균 밝기를 120 근처로)
+function brightenIntoRetryCanvas(meanLuminance) {
+  const { width, height } = analysisCanvas;
+  retryCanvas.width = width; retryCanvas.height = height;
+  const gamma = Math.min(1, Math.max(0.3, Math.log(120 / 255) / Math.log(Math.max(1, meanLuminance) / 255)));
+  const lookup = new Uint8ClampedArray(256); // 밝기 0~255를 보정 후 값으로 바꾸는 표
+  for (let value = 0; value < 256; value++) lookup[value] = 255 * Math.pow(value / 255, gamma);
+  const image = analysisContext.getImageData(0, 0, width, height);
+  for (let index = 0; index < image.data.length; index += 4) {
+    image.data[index] = lookup[image.data[index]];
+    image.data[index + 1] = lookup[image.data[index + 1]];
+    image.data[index + 2] = lookup[image.data[index + 2]];
+  }
+  retryContext.putImageData(image, 0, 0);
+}
+
+async function analyzeFaces(gray, smooth, width, height, noiseFloor, meanLuminance) {
+  if (!faceApi) return null;
+  let detections = await detectFaces(analysisCanvas);
+  if (!detections.length && meanLuminance < DARK_RETRY_LUMINANCE) {
+    // 밤 사진처럼 어두우면 얼굴을 놓치기 쉬워서, 밝게 보정한 사본으로 한 번 더 찾는다
+    faceEngine.darkRetries++;
+    brightenIntoRetryCanvas(meanLuminance);
+    detections = await detectFaces(retryCanvas, DARK_RETRY_THRESHOLD);
+    if (detections.length) faceEngine.darkRetryHits++;
+  }
   return detections.map((detection) => {
     const box = detection.detection.box;
     const points = detection.landmarks.positions;
@@ -548,16 +594,53 @@ async function analyzeOne(photo) {
   const smooth = gaussianSmooth(gray, width, height);
   const noise = noiseSigma(gray, width, height);
   const noiseFloor = NOISE_LAPLACIAN_GAIN * noise * noise; // 노이즈만으로 생기는 라플라시안 분산
+  const light = luminanceStats(gray, width);
   photo.analysis = {
     focusSharpness: focusSharpness(smooth, width, height, noiseFloor),
     noise,
-    light: luminanceStats(gray, width),
+    light,
     hash: differenceHash(),
-    faces: await analyzeFaces(gray, smooth, width, height, noiseFloor), // null이면 얼굴 분석을 하지 않음
+    faces: await analyzeFaces(gray, smooth, width, height, noiseFloor, light.mean), // null이면 얼굴 분석을 하지 않음
   };
   photo.takenAt = takenAt;
   photo.thumbUrl = URL.createObjectURL(thumbBlob);
   dbSet(cacheKey, { takenAt, width: photo.width, height: photo.height, analysis: photo.analysis, thumbBlob });
+}
+
+// 휴대폰 GPU에 따라 WebGL 계산이 부정확해 얼굴을 못 찾는 경우가 있다.
+// 처음 몇 장을 WebGL과 CPU로 각각 돌려 보고, WebGL이 눈에 띄게 적게 찾으면 CPU로 계속한다.
+async function crossCheckFaceBackends() {
+  if (!faceApi || faceEngine.backend !== 'webgl' || forcedFaceBackend === 'webgl') return;
+  $('#analyze-text').textContent = t('checkingBackend');
+  const sampleCanvases = []; // 비교에 쓸 분석용 크기 사본
+  for (const photo of state.photos.slice(0, CROSS_CHECK_SAMPLES)) {
+    try {
+      const bitmap = await createImageBitmap(await getPhotoFile(photo), { imageOrientation: 'from-image' });
+      const canvas = document.createElement('canvas');
+      drawScaled(bitmap, ANALYSIS_LONG_SIDE, canvas, canvas.getContext('2d'));
+      bitmap.close();
+      sampleCanvases.push(canvas);
+    } catch { /* 열지 못한 사진은 비교에서 뺀다 */ }
+  }
+  if (!sampleCanvases.length) return;
+  const countFaces = async () => {
+    let total = 0;
+    for (const canvas of sampleCanvases) total += (await faceApi.detectAllFaces(canvas, new faceApi.TinyFaceDetectorOptions({ inputSize: 512, scoreThreshold: 0.45 }))).length;
+    return total;
+  };
+  try {
+    const webglFaces = await countFaces();
+    await faceApi.tf.setBackend('cpu');
+    await faceApi.tf.ready();
+    const cpuFaces = await countFaces();
+    const switched = cpuFaces >= 2 && webglFaces < cpuFaces * 0.6;
+    if (!switched) { await faceApi.tf.setBackend('webgl'); await faceApi.tf.ready(); }
+    faceEngine.crossCheck = { samples: sampleCanvases.length, webglFaces, cpuFaces, switched };
+  } catch (error) {
+    console.warn('face backend cross-check failed', error);
+  }
+  faceEngine.backend = faceApi.tf.getBackend();
+  console.info('face engine', JSON.stringify(faceEngine));
 }
 
 async function analyzeAll() {
@@ -565,6 +648,7 @@ async function analyzeAll() {
   $('#analyze-meter').style.width = '0%';
   $('#analyze-sheet').innerHTML = '';
   await loadLibraries();
+  await crossCheckFaceBackends();
   const startedAt = performance.now();
   const totalCount = state.photos.length;
   let finishedCount = 0;
@@ -1369,8 +1453,23 @@ $('#criteria').addEventListener('toggle', (event) => {
       <tr><td class="hint">${t('colItem')}</td><td class="hint">${t('colWeight')}</td>${currentPhoto ? `<td class="hint">${t('colThis')}</td>` : ''}</tr>
       ${FEATURE_KEYS.map((key, index) => `<tr><td>${featureLabel(key)}</td><td>${Math.round((Math.max(0, model.theta[index]) / totalPositive) * 100)}%</td>${currentPhoto?.features ? `<td>${Math.round(currentPhoto.features[key] * 100)}</td>` : ''}</tr>`).join('')}
     </table>
-    <p class="hint source">${t('criteriaNote')}</p>`;
+    <p class="hint source">${t('criteriaNote')}</p>
+    <h2 class="diag-title">${t('diagTitle')}</h2>
+    <p class="hint source">${diagnosticsText()}</p>`;
 });
+// 분석 정보: 얼굴 검출이 어떤 방식으로 돌았고 얼마나 찾았는지 (문제 제보를 받을 때 확인용)
+function diagnosticsText() {
+  const analyzedWithFaces = state.photos.filter((photo) => photo.analysis?.faces);
+  const photosWithFaces = analyzedWithFaces.filter((photo) => mainFacesOf(photo).length > 0).length;
+  const lines = [];
+  lines.push(faceEngine.backend === 'none' || !analyzedWithFaces.length ? t('diagNoFace') : t('diagBackend', { backend: faceEngine.backend === 'webgl' ? 'WebGL' : 'CPU', float32: faceEngine.float32 }));
+  if (faceEngine.crossCheck) lines.push(t('diagCrossCheck', faceEngine.crossCheck));
+  if (analyzedWithFaces.length) lines.push(t('diagFaces', { found: photosWithFaces, total: analyzedWithFaces.length }));
+  if (faceEngine.darkRetries) lines.push(t('diagDark', { hits: faceEngine.darkRetryHits, tries: faceEngine.darkRetries }));
+  lines.push(t('diagHint'));
+  return lines.map(escapeHtml).join('<br>');
+}
+
 function currentPhotoOnStage() {
   return $('#stage .frame') && stagePhotoId ? state.photoById.get(stagePhotoId) : null;
 }
