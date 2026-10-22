@@ -249,16 +249,22 @@
   .toast { position: fixed; top: 64px; right: 16px; max-width: min(440px, 92vw); display: flex; gap: 12px; align-items: center; padding: 12px 14px; background: var(--ink); color: var(--surface); border-radius: var(--radius-m); box-shadow: 0 8px 24px rgba(30, 37, 35, .25); z-index: 30; font-size: 13px; }
   .toast .button { background: transparent; border-color: rgba(255, 255, 255, .35); color: #fff; height: 30px; flex-shrink: 0; }
 
+  /* ---------- 좁은 화면의 상단 바 (휴대폰, 태블릿) ----------
+     한 줄에 이름, 단계 탭, 언어, 사람, 남긴 사진이 다 들어가지 않으면 화면이 옆으로 밀린다.
+     1100px 이하에서는 남긴 사진 줄과 단계 탭을 각각 다음 줄로 내린다. */
+  @media (max-width: 1100px) {
+    .topbar { height: auto; flex-wrap: wrap; padding: 8px 12px 0; gap: 8px 10px; padding-top: max(8px, env(safe-area-inset-top)); }
+    .goal { order: 2; flex: 1 1 100%; min-width: 0; padding-bottom: 6px; }
+    .tabs { order: 3; width: calc(100% + 24px); margin: 0 -12px; height: 42px; overflow-x: auto; border-top: 1px solid var(--rule); padding: 0 4px; }
+  }
+
   /* ---------- 휴대폰 ---------- */
   @media (max-width: 760px) {
     body { font-size: 15px; }
-    .topbar { height: auto; flex-wrap: wrap; padding: 8px 12px 0; gap: 8px 10px; padding-top: max(8px, env(safe-area-inset-top)); }
-    .goal { min-width: 0; flex: 1; }
     .goal-note { display: none; }
     #reviewer-select { max-width: 96px; }
     #language-select { max-width: 92px; }
     .brand { font-size: 14px; }
-    .tabs { order: 3; width: calc(100% + 24px); margin: 0 -12px; height: 42px; overflow-x: auto; border-top: 1px solid var(--rule); padding: 0 4px; }
     .setup { padding: 28px 16px 60px; }
     .field { grid-template-columns: 1fr; }
     .field > label, .field > .label { padding-top: 0; }
