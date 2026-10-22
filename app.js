@@ -45,6 +45,7 @@ const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시�
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
 const CACHE_VERSION = 'v4';             // 분석 방식이 바뀌면 올린다 (v4: 얼굴 검출 교차 확인, 어두운 사진 재시도)
+const APP_VERSION = 'v9';               // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
 const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
 const DARK_RETRY_LUMINANCE = 100;        // 평균 밝기가 이보다 어두운데 얼굴을 못 찾으면 밝게 보정해서 한 번 더 찾는다
 const DARK_RETRY_THRESHOLD = 0.35;       // 다시 찾을 때의 검출 기준 (기본 0.45보다 조금 너그럽게)
@@ -1961,9 +1962,20 @@ $('#language-select').onchange = (event) => {
 };
 
 // 설치형 웹앱: 한 번 열고 나면 인터넷 없이도 동작하게 앱 파일을 기기에 보관한다
-// 보관한 파일로 열리기 때문에, 새 버전을 배포해도 이미 열린 화면은 예전 코드로 돈다.
-// 새 버전이 자리를 잡으면(controllerchange) 알림 줄을 띄워 새로고침을 권한다.
+// 서비스 워커는 앱 파일을 서버에서 먼저 받으므로, 인터넷이 되면 열 때마다 최신 코드가 뜬다.
+// 그래도 이미 열려 있던 화면은 예전 코드로 돈다. 새 서비스 워커가 자리를 잡으면(controllerchange)
+// 그 버전과 이 화면의 버전을 비교해서, 다르면
+//   사진을 아직 안 불러왔으면: 잃을 게 없으니 바로 새로고침
+//   사진을 고르는 중이면: 알림 줄을 띄우고 사용자가 고르게 한다 (닫을 수 있다)
 let updateBarShown = false;
+function askWorkerVersion(worker) {
+  return new Promise((resolve) => {
+    const channel = new MessageChannel();
+    const timer = setTimeout(() => resolve(null), 2000); // 답이 없는 예전 서비스 워커
+    channel.port1.onmessage = (event) => { clearTimeout(timer); resolve(event.data?.version ?? null); };
+    worker.postMessage({ type: 'get-version' }, [channel.port2]);
+  });
+}
 function updateBarMessage() {
   if (!state.photos.length) return t('updateReady');
   // 폴더 핸들로 연 사진은 '이어서 고르기'로 바로 돌아오고, 파일 선택으로 연 사진은 다시 골라야 한다
@@ -1981,18 +1993,25 @@ function renderUpdateBar() {
     await saveProjectNow(); // 고른 결과를 먼저 저장하고 새로고침
     location.reload();
   };
-  const laterButton = document.createElement('button');
-  laterButton.className = 'button quiet';
-  laterButton.textContent = t('updateLater');
-  laterButton.onclick = () => { updateBarShown = false; bar.classList.add('hidden'); };
-  bar.append(reloadButton, laterButton);
+  // 닫기: 쓰는 중에 거슬리지 않게 바로 치운다. 다음에 열 때는 어차피 새 버전으로 뜬다
+  const closeButton = document.createElement('button');
+  closeButton.className = 'button quiet close';
+  closeButton.setAttribute('aria-label', t('updateClose'));
+  closeButton.title = t('updateClose');
+  closeButton.innerHTML = '<i class="ph ph-x" aria-hidden="true"></i>';
+  closeButton.onclick = () => { updateBarShown = false; bar.classList.add('hidden'); };
+  bar.append(reloadButton, closeButton);
   bar.classList.remove('hidden');
 }
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   // 처음 방문해서 서비스 워커가 막 생긴 경우는 새 버전이 아니니 알리지 않는다
   const hadController = Boolean(navigator.serviceWorker.controller);
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (!hadController || updateBarShown) return;
+  navigator.serviceWorker.addEventListener('controllerchange', async () => {
+    const newWorker = navigator.serviceWorker.controller;
+    if (!hadController || updateBarShown || !newWorker) return;
+    // 이 화면이 이미 서버에서 받은 최신 코드면 새로고침할 필요가 없다
+    if (await askWorkerVersion(newWorker) === APP_VERSION) return;
+    if (!state.photos.length && state.view === 'setup') { location.reload(); return; }
     updateBarShown = true;
     renderUpdateBar();
   });
@@ -2005,6 +2024,6 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
 }
 // 진단용: ?debug=1 이면 콘솔에서 상태를 볼 수 있게 한다 (사진 데이터는 이 기기 안에만 있다)
 if (new URLSearchParams(location.search).get('debug') === '1') {
-  window.momentSelectDebug = { state, faceEngine, hashDistance, correlation, looksSimilar, similarKeptPhotos };
+  window.momentSelectDebug = { APP_VERSION, state, faceEngine, hashDistance, correlation, looksSimilar, similarKeptPhotos };
 }
 applyLanguage();
