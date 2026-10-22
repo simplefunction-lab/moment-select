@@ -1,0 +1,22 @@
+@font-face {
+  font-family: "Phosphor";
+  src: url("./phosphor-subset.woff2") format("woff2");
+  font-weight: normal; font-style: normal; font-display: block;
+}
+.ph { font-family: "Phosphor" !important; speak: never; font-style: normal; font-weight: normal; font-variant: normal; text-transform: none; line-height: 1; -webkit-font-smoothing: antialiased; }
+.ph.ph-x::before { content: "\e4f6"; }
+.ph.ph-arrow-counter-clockwise::before { content: "\e038"; }
+.ph.ph-magnifying-glass-plus::before { content: "\e310"; }
+.ph.ph-user-focus::before { content: "\e6fc"; }
+.ph.ph-circle::before { content: "\e18a"; }
+.ph.ph-folder-open::before { content: "\e256"; }
+.ph.ph-folder-simple-plus::before { content: "\e25e"; }
+.ph.ph-copy::before { content: "\e1ca"; }
+.ph.ph-download-simple::before { content: "\e20c"; }
+.ph.ph-upload-simple::before { content: "\e4c0"; }
+.ph.ph-sliders-horizontal::before { content: "\e434"; }
+.ph.ph-eye-closed::before { content: "\e222"; }
+.ph.ph-clock-counter-clockwise::before { content: "\e1a0"; }
+.ph.ph-images::before { content: "\e836"; }
+.ph.ph-share-network::before { content: "\e408"; }
+.ph.ph-arrow-u-up-left::before { content: "\e08a"; }
