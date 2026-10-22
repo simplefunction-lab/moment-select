@@ -9,8 +9,8 @@ Swipe through hundreds of photos and keep the ones you want. Built for the day t
 ## Your photos stay on your device
 
 - Photos are read and analyzed in the browser. Nothing is uploaded.
-- Face detection, fonts and icons ship with the app. A Content Security Policy blocks every request to another origin, so the page cannot send anything out even by mistake.
-- After the first visit the app works offline.
+- Face detection, face recognition, the aesthetic model, fonts and icons ship with the app. A Content Security Policy blocks every request to another origin, so the page cannot send anything out even by mistake.
+- The models (about 15 MB) download once, the first time you analyze photos, with a note saying what each one is for. After that the app works offline.
 
 ## How it works
 
@@ -24,9 +24,22 @@ Two people can pick separately and merge: kept by both, or kept by either.
 
 ### Scoring
 
-Each photo gets eight values between 0 and 1: subject sharpness, sharpness of the in-focus area, exposure, absence of frowns, smiles, faces not cut off at the edge, low noise, and open eyes. Sharpness and noise are ranked against the other photos in the same set.
+Each photo gets ten values between 0 and 1: subject sharpness, sharpness of the in-focus area, exposure, absence of frowns, smiles, faces not cut off at the edge, low noise, open eyes, an aesthetic score, and whether the main people are in it. Sharpness, noise and the aesthetic score are ranked against the other photos in the same set.
 
-Starting weights depend on the photo type (wedding, travel, events, family, other). After about 20 decisions, a logistic regression refits the weights to the person picking, and the remaining photos are reordered. Closed-eye shots score lower by default. Turn this off if your photographer will retouch the eyes, as wedding studios often do; the shots are then only flagged.
+- **Aesthetic score:** NIMA (MobileNet), trained on about 250,000 rated photos from the AVA dataset ([idealo/image-quality-assessment](https://github.com/idealo/image-quality-assessment), Apache 2.0). It runs with TensorFlow.js and is skipped on devices without graphics acceleration, where it would take one to two seconds per photo.
+- **Main people:** faces are grouped by person with face-api's face recognition model. The people who appear most often are preselected (two for weddings), and you can change them under Main people.
+
+Starting weights depend on the photo type (wedding, travel, events, family, other). The model then learns from the person picking:
+
+- Keep and drop decisions train a logistic regression.
+- Choosing one shot out of a similar set adds "this one beats that one" pairs (Bradley-Terry). Scene and people are the same in such pairs, so they isolate quality and taste.
+- Early in the first pass, every fifth photo is one the model is unsure about, marked as a taste check.
+
+Closed-eye shots score lower by default. Turn this off if your photographer will retouch the eyes, as wedding studios often do; the shots are then only flagged.
+
+When narrowing down, photos are split into scenes by capture time. The last kept photo of a scene comes last, so a whole scene does not disappear by accident.
+
+The Scoring panel shows how well the score matches your decisions, measured with the score each photo had when you decided. 50% is chance.
 
 ## Run locally
 
@@ -42,10 +55,11 @@ npx serve .
 |---|---|
 | `index.html` | Page markup and Content Security Policy |
 | `app.js` | Reading files, analysis, scoring, learning, swiping, export |
+| `aesthetic.js` | Aesthetic score model (NIMA) run with TensorFlow.js |
 | `i18n.js` | Korean and English text |
 | `styles.css` | Layout and theme |
 | `sw.js` | Service worker that caches the app for offline use |
-| `vendor/` | face-api models, exifr, subset fonts and icons ([licenses](vendor/LICENSES.txt)) |
+| `vendor/` | face-api and its models, the NIMA model, exifr, subset fonts and icons ([licenses](vendor/LICENSES.txt)) |
 
 ---
 
@@ -58,8 +72,8 @@ npx serve .
 ### 사진은 기기 밖으로 나가지 않아요
 
 - 사진은 브라우저 안에서 읽고 분석해요. 어디에도 올리지 않아요.
-- 얼굴 분석 모델, 글꼴, 아이콘을 앱과 함께 배포해요. 콘텐츠 보안 정책(CSP)이 다른 출처로 가는 요청을 모두 막아서, 실수로라도 밖으로 보낼 수 없어요.
-- 한 번 열고 나면 인터넷 없이도 동작해요.
+- 얼굴 분석, 같은 사람 알아보기, 미적 점수 모델과 글꼴, 아이콘을 앱과 함께 배포해요. 콘텐츠 보안 정책(CSP)이 다른 출처로 가는 요청을 모두 막아서, 실수로라도 밖으로 보낼 수 없어요.
+- 모델(약 15MB)은 처음 분석할 때 한 번만 받아요. 받는 동안 어떤 용도의 모델인지 보여줘요. 그다음부터는 인터넷 없이도 동작해요.
 
 ### 사용 흐름
 
@@ -73,9 +87,22 @@ npx serve .
 
 ### 점수
 
-사진마다 0에서 1 사이 값 8개를 매겨요. 인물 선명도, 초점 부분 선명도, 노출, 찡그림 없음, 웃음, 얼굴 안 잘림, 노이즈 적음, 눈 뜸이에요. 선명도와 노이즈는 같은 폴더 사진들 사이의 순위로 계산해요.
+사진마다 0에서 1 사이 값 10개를 매겨요. 인물 선명도, 초점 부분 선명도, 노출, 찡그림 없음, 웃음, 얼굴 안 잘림, 노이즈 적음, 눈 뜸, 보기 좋음, 주인공이에요. 선명도, 노이즈, 보기 좋음은 같은 폴더 사진들 사이의 순위로 계산해요.
 
-처음 가중치는 사진 종류(웨딩과 스냅, 여행, 행사와 모임, 아이와 가족, 기타)마다 달라요. 결정이 20건쯤 쌓이면 고르는 사람의 결정으로 로지스틱 회귀를 다시 맞추고 남은 사진 순서를 바꿔요. 눈 감은 사진은 기본으로 점수를 깎아요. 웨딩 촬영처럼 작가가 눈을 합성해 준다면 설정에서 끄면 되고, 그때는 표시만 해요.
+- **보기 좋음:** AVA 데이터셋의 사진 평점 약 25만 장으로 학습된 NIMA(MobileNet) 모델이에요([idealo/image-quality-assessment](https://github.com/idealo/image-quality-assessment), Apache 2.0). TensorFlow.js로 돌리고, 그래픽 가속이 없는 기기에서는 장당 1~2초가 걸려서 건너뛰어요.
+- **주인공:** face-api의 얼굴 인식 모델로 같은 사람끼리 묶어요. 가장 자주 나온 사람을 미리 골라두고(웨딩은 2명), '주인공'에서 바꿀 수 있어요.
+
+처음 가중치는 사진 종류(웨딩과 스냅, 여행, 행사와 모임, 아이와 가족, 기타)마다 달라요. 그다음부터는 고르는 사람에게서 배워요.
+
+- 남김과 뺌 결정으로 로지스틱 회귀를 맞춰요.
+- 비슷한 컷 중 하나를 고르면 "이 사진이 저 사진보다 낫다"는 쌍으로도 배워요(Bradley-Terry). 장면과 인물이 같아서 품질과 취향 차이만 남아요.
+- 1차 셀렉 초반에는 다섯 번째마다 모델이 헷갈리는 사진을 '취향 확인용'으로 끼워 보여줘요.
+
+눈 감은 사진은 기본으로 점수를 깎아요. 웨딩 촬영처럼 작가가 눈을 합성해 준다면 설정에서 끄면 되고, 그때는 표시만 해요.
+
+줄이기 단계에서는 촬영 시각으로 장면을 나눠요. 어떤 장면의 마지막 남은 사진은 맨 뒤로 미뤄서, 장면 하나가 통째로 빠지지 않게 해요.
+
+점수 기준 패널에서 점수가 내 결정을 얼마나 맞혔는지 볼 수 있어요. 결정할 때 보이던 점수로 계산하고, 50%면 무작위 수준이에요.
 
 ### 내 컴퓨터에서 실행
 

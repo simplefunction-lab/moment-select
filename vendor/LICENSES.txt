@@ -1,7 +1,7 @@
 모먼트 셀렉에 함께 배포하는 외부 구성요소
 
 face-api (@vladmandic/face-api 1.7.15) - MIT License - https://github.com/vladmandic/face-api
-  얼굴 검출, 얼굴 랜드마크, 표정 모델 포함
+  얼굴 검출, 얼굴 랜드마크, 표정, 얼굴 인식(같은 사람 알아보기) 모델 포함
 exifr 7.1.3 - MIT License - https://github.com/MikeKovarik/exifr
 Pretendard 1.3.9 - SIL Open Font License 1.1 - https://github.com/orioncactus/pretendard
   완성형 한글 2,350자와 라틴 문자만 남겨 서브셋
@@ -9,3 +9,7 @@ Nanum Pen Script (@fontsource/nanum-pen-script 5.3.0) - SIL Open Font License 1.
   '남김', '뺌'과 영문 keep, drop 글자만 남겨 서브셋
 Phosphor Icons (@phosphor-icons/web 2.1.2) - MIT License - https://github.com/phosphor-icons/web
   사용하는 아이콘 16개만 남겨 서브셋
+NIMA 미적 점수 모델 (idealo/image-quality-assessment, MobileNet aesthetic, weights_mobilenet_aesthetic_0.07.hdf5)
+  Apache License 2.0 - Copyright 2018 idealo internet GmbH - https://github.com/idealo/image-quality-assessment
+  변경 사항: 배치 정규화를 앞 합성곱에 접어 넣고 가중치를 float16으로 바꿔 nima-aesthetic.bin/json으로 저장
+  (변환 스크립트: vendor/nima/export.py). 모델 구조와 학습된 값은 바꾸지 않았다.
