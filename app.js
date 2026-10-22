@@ -488,8 +488,29 @@ function luminanceStats(gray, width, left = 0, top = 0, right = width, bottom = 
   return { mean: total / Math.max(1, sampleCount), brightClip: brightClipped / Math.max(1, sampleCount), darkClip: darkClipped / Math.max(1, sampleCount) };
 }
 
+// 1024px를 한 번에 9x8이나 16x12로 줄이면 픽셀 몇 개만 집어오는 앨리어싱이 생겨 비교값이 흔들린다.
+// 반씩 여러 번 줄여서 64px 근처의 부드러운 사본을 만든 뒤 그것을 작은 크기로 줄인다.
+const smallCanvas = document.createElement('canvas');
+const smallContext = smallCanvas.getContext('2d');
+function prepareSmallCopy() {
+  let source = analysisCanvas;
+  let width = analysisCanvas.width, height = analysisCanvas.height;
+  const stepCanvas = document.createElement('canvas');
+  const stepContext = stepCanvas.getContext('2d');
+  while (Math.max(width, height) > 128) {
+    width = Math.max(1, Math.round(width / 2)); height = Math.max(1, Math.round(height / 2));
+    stepCanvas.width = width; stepCanvas.height = height;
+    stepContext.imageSmoothingQuality = 'high';
+    stepContext.drawImage(source, 0, 0, width, height);
+    smallCanvas.width = width; smallCanvas.height = height;
+    smallContext.drawImage(stepCanvas, 0, 0);
+    source = smallCanvas;
+  }
+}
+
 function differenceHash() {
-  hashContext.drawImage(analysisCanvas, 0, 0, 9, 8);
+  hashContext.imageSmoothingQuality = 'high';
+  hashContext.drawImage(smallCanvas, 0, 0, 9, 8);
   const gray = toGrayscale(hashContext, 9, 8);
   const hashWords = [0, 0];
   let bitIndex = 0;
@@ -506,7 +527,8 @@ const tinyCanvas = document.createElement('canvas');
 tinyCanvas.width = 16; tinyCanvas.height = 12;
 const tinyContext = tinyCanvas.getContext('2d', { willReadFrequently: true });
 function tinyLumaVector() {
-  tinyContext.drawImage(analysisCanvas, 0, 0, 16, 12);
+  tinyContext.imageSmoothingQuality = 'high';
+  tinyContext.drawImage(smallCanvas, 0, 0, 16, 12);
   const gray = toGrayscale(tinyContext, 16, 12);
   const mean = gray.reduce((sum, value) => sum + value, 0) / gray.length;
   const centered = Array.from(gray, (value) => value - mean);
@@ -616,7 +638,7 @@ async function analyzeOne(photo) {
     focusSharpness: focusSharpness(smooth, width, height, noiseFloor),
     noise,
     light,
-    hash: differenceHash(),
+    hash: (prepareSmallCopy(), differenceHash()),
     tiny: tinyLumaVector(),
     faces: await analyzeFaces(gray, smooth, width, height, noiseFloor, light.mean), // null이면 얼굴 분석을 하지 않음
   };
@@ -1184,7 +1206,10 @@ function renderPickView() {
     }
     if (head.type === 'divider') return renderDivider(stage, head);
     if (head.type === 'group') return renderBurst(stage, head);
-    return renderSingle(stage, state.photoById.get(head.ids[0]), queue.slice(1).flatMap((unit) => unit.ids).slice(0, 2), 'first');
+    const headPhoto = state.photoById.get(head.ids[0]);
+    const firstKeptLookalikes = singleViewIds.has(headPhoto.id) ? [] : similarKeptPhotos(headPhoto);
+    if (firstKeptLookalikes.length) return renderKeptCompare(stage, headPhoto, firstKeptLookalikes, 'first');
+    return renderSingle(stage, headPhoto, queue.slice(1).flatMap((unit) => unit.ids).slice(0, 2), 'first');
   }
 
   if (mode === 'distill') {
@@ -1217,6 +1242,8 @@ function renderPickView() {
       [{ label: t('btnRescueAgain'), run: () => { state.rounds[state.currentReviewer].rescue = []; saveProjectSoon(); render(); } },
        { label: keepCount > target ? t('btnDistill') : t('btnExport'), primary: true, run: () => setView(keepCount > target ? 'distill' : 'export') }]);
   }
+  const rescueKeptLookalikes = singleViewIds.has(head.id) ? [] : similarKeptPhotos(head);
+  if (rescueKeptLookalikes.length) return renderKeptCompare(stage, head, rescueKeptLookalikes, 'rescue');
   return renderSingle(stage, head, queue.slice(1, 3).map((photo) => photo.id), 'rescue');
 }
 
@@ -1372,9 +1399,23 @@ let burstSelection = { key: null, selected: new Set() };
 
 function renderBurst(stage, unit) {
   keepOnlyUrls([]);
-  const members = unit.ids.map((id) => state.photoById.get(id)).sort((left, right) => right.score - left.score);
+  const groupMembers = unit.ids.map((id) => state.photoById.get(id)).sort((left, right) => right.score - left.score);
+  // 묶음 밖에서 이미 남긴 비슷한 사진도 같이 보여준다 (따로 남긴 컷과 나란히 비교할 수 있게)
+  const groupIdSet = new Set(unit.ids);
+  const outsideKept = [];
+  for (const member of groupMembers) {
+    for (const lookalike of similarKeptPhotos(member)) {
+      if (!groupIdSet.has(lookalike.id) && !outsideKept.includes(lookalike)) outsideKept.push(lookalike);
+    }
+  }
+  const members = [...groupMembers, ...outsideKept.slice(0, 4)]; // 화면에 보여줄 사진 (묶음 사진, 묶음 밖 남긴 사진 순)
   if (burstSelection.key !== unit.key) {
-    burstSelection = { key: unit.key, selected: new Set(state.settings.useScore ? members.filter((photo) => photo.groupBest).map((photo) => photo.id) : []) };
+    // 묶음 안에 이미 결정한 사진이 있으면 그 결정을 그대로 보여주고, 없으면 최고점 한 장을 미리 고른다
+    const alreadyDecided = members.some((photo) => statusOf(photo.id));
+    const initialIds = alreadyDecided
+      ? members.filter((photo) => statusOf(photo.id) === 'keep').map((photo) => photo.id)
+      : state.settings.useScore ? members.filter((photo) => photo.groupBest).map((photo) => photo.id) : [];
+    burstSelection = { key: unit.key, selected: new Set(initialIds) };
   }
   // 좁은 화면(휴대폰 세로)에서는 사진을 크게 보이게 열 수를 줄인다
   const isNarrow = matchMedia('(max-width: 760px)').matches;
@@ -1382,7 +1423,7 @@ function renderBurst(stage, unit) {
   stage.innerHTML = `
     <div class="burst">
       <div class="burst-head">
-        <h2>${t('burstTitle', members.length)}</h2>
+        <h2>${t('burstTitle', groupMembers.length)}${outsideKept.length ? t('burstWithKept', Math.min(4, outsideKept.length)) : ''}</h2>
         <span class="hint">${t('burstHint')}${state.settings.useScore ? t('burstHintScored') : ''}</span>
         <span class="spacer"></span>
         <button class="button" id="burst-expand">${t('burstExpand')}</button>
@@ -1392,7 +1433,7 @@ function renderBurst(stage, unit) {
           <button class="shot" data-id="${escapeHtml(photo.id)}" aria-pressed="${burstSelection.selected.has(photo.id)}" title="${t('burstShotTitle', escapeHtml(photo.relPath))}">
             <img src="${photo.thumbUrl}" alt="${escapeHtml(photo.name)}" loading="lazy">
             ${index < 9 ? `<span class="index num">${index + 1}</span>` : ''}
-            <span class="tags">${state.settings.useScore ? `<span class="tag num">${t('tagScore', photo.score)}</span>` : ''}${hasClosedEyes(photo) ? `<span class="tag flag"><i class="ph ph-eye-closed"></i> ${t('tagEyesShort')}</span>` : ''}</span>
+            <span class="tags">${state.settings.useScore ? `<span class="tag num">${t('tagScore', photo.score)}</span>` : ''}${hasClosedEyes(photo) ? `<span class="tag flag"><i class="ph ph-eye-closed"></i> ${t('tagEyesShort')}</span>` : ''}${statusOf(photo.id) ? `<span class="tag">${t(statusOf(photo.id) === 'keep' ? 'tagAlreadyKept' : 'tagAlreadyDropped')}</span>` : ''}</span>
           </button>`).join('')}
       </div>
     </div>`;
@@ -1411,7 +1452,11 @@ function renderBurst(stage, unit) {
   }
   $('#burst-expand').onclick = () => { state.expandedGroups.add(unit.key); buildUnits(); saveProjectSoon(); render(); };
   const confirm = () => {
-    recordDecisions(members.map((photo) => ({ id: photo.id, status: burstSelection.selected.has(photo.id) ? 'keep' : 'drop' })), 'first-burst');
+    // 묶음 사진은 고른 대로, 묶음 밖 남긴 사진은 선택을 풀었을 때만 뺀다
+    const changes = members
+      .filter((photo) => groupIdSet.has(photo.id) || !burstSelection.selected.has(photo.id))
+      .map((photo) => ({ id: photo.id, status: burstSelection.selected.has(photo.id) ? 'keep' : 'drop' }));
+    recordDecisions(changes, 'first-burst');
     burstSelection = { key: null, selected: new Set() };
     render();
   };
@@ -1425,6 +1470,86 @@ function renderBurst(stage, unit) {
   $('#act-confirm').onclick = confirm;
   $('#act-undo').onclick = undoLast;
   currentKeys = { left: dropAll, right: confirm, number: (digit) => { const photo = members[digit - 1]; if (photo) toggleMember(photo.id); } };
+}
+
+// ---------- 이미 남긴 비슷한 사진과 비교 ----------
+const SIMILAR_KEPT_HASH_LOOSE = 26;            // 비교를 권할 때는 묶기보다 조금 너그럽게 (결정은 사람이 하므로)
+const SIMILAR_KEPT_TIME_GAP_MS = 10 * 60_000;  // 촬영 시각이 10분 넘게 떨어지면 비교하지 않는다
+const singleViewIds = new Set();               // 사용자가 '한 장만 보기'를 고른 사진 (이번 방문 동안)
+let keptCompareCursor = { photoId: null, index: 0 }; // 비슷한 남긴 사진이 여러 장일 때 지금 보여주는 순번
+
+function similarKeptPhotos(photo) {
+  if (!photo?.analysis || photo.analysis.failed) return [];
+  return keepIds()
+    .filter((id) => id !== photo.id)
+    .map((id) => state.photoById.get(id))
+    .filter((other) => {
+      if (photo.takenAt && other.takenAt && Math.abs(photo.takenAt - other.takenAt) > SIMILAR_KEPT_TIME_GAP_MS) return false;
+      if (other.analysis.failed) return false;
+      const distance = hashDistance(photo.analysis.hash, other.analysis.hash);
+      if (distance <= SIMILAR_HASH_DISTANCE) return true;
+      return distance <= SIMILAR_KEPT_HASH_LOOSE && photo.analysis.tiny && other.analysis.tiny && correlation(photo.analysis.tiny, other.analysis.tiny) >= SIMILAR_CORRELATION;
+    })
+    .sort((left, right) => hashDistance(photo.analysis.hash, left.analysis.hash) - hashDistance(photo.analysis.hash, right.analysis.hash));
+}
+
+function renderKeptCompare(stage, currentPhoto, keptLookalikes, stageName) {
+  stagePhotoId = currentPhoto.id;
+  if (keptCompareCursor.photoId !== currentPhoto.id) keptCompareCursor = { photoId: currentPhoto.id, index: 0 };
+  const keptPhoto = keptLookalikes[keptCompareCursor.index % keptLookalikes.length];
+  keepOnlyUrls([currentPhoto.id, keptPhoto.id]);
+  stage.innerHTML = `
+    <div class="kept-compare">
+      <div class="burst-head">
+        <h2>${t('keptCompareTitle')}</h2>
+        <span class="hint">${t('keptCompareHint')}</span>
+        <span class="spacer"></span>
+        ${keptLookalikes.length > 1 ? `<button class="button" id="kept-next">${t('keptCompareNext', { index: (keptCompareCursor.index % keptLookalikes.length) + 1, total: keptLookalikes.length })}</button>` : ''}
+        <button class="button" id="kept-single">${t('keptCompareSingle')}</button>
+      </div>
+      <div class="compare">
+        ${[[currentPhoto, 'labelCurrent'], [keptPhoto, 'labelKept']].map(([photo, labelKey]) => `
+          <button class="shot" data-id="${escapeHtml(photo.id)}" title="${t('burstShotTitle', escapeHtml(photo.relPath))}">
+            <img src="${photo.thumbUrl}" alt="${escapeHtml(photo.name)}">
+            <span class="index">${t(labelKey)}</span>
+            <span class="tags">${photoTagsHtml(photo, { showAdded: false })}</span>
+          </button>`).join('')}
+      </div>
+    </div>`;
+  const shots = stage.querySelectorAll('.shot');
+  shots.forEach((shot) => {
+    const photo = state.photoById.get(shot.dataset.id);
+    fullImageUrl(photo).then((url) => { const image = $('img', shot); if (image.isConnected) image.src = url; });
+    shot.onclick = () => openViewer(photo); // 누르면 크게 보기 (결정은 아래 버튼으로)
+  });
+  let deciding = false; // 표시를 그리는 동안 들어온 두 번째 입력은 무시한다 (같은 결정이 두 번 기록되지 않게)
+  const finish = (changes, keepMarkOn) => {
+    if (deciding) return;
+    deciding = true;
+    if (keepMarkOn !== null) { const mark = cloneMark('keep'); shots[keepMarkOn].append(mark); mark.classList.add('drawn'); }
+    setTimeout(() => {
+      const undoEntry = changes.length ? recordDecisions(changes, `${stageName}-kept-compare`) : emptyUndo();
+      if (!changes.length) state.undoStack.push(undoEntry);
+      if (stageName === 'rescue') markRoundSeen('rescue', [currentPhoto.id], undoEntry);
+      render();
+    }, keepMarkOn !== null ? 260 : 0);
+  };
+  // 왼쪽: 지금 사진 빼기. 다시 보기에서는 이미 빠진 사진이라 결정은 그대로 두고 넘어간다
+  const dropCurrent = () => finish(stageName === 'rescue' ? [] : [{ id: currentPhoto.id, status: 'drop' }], null);
+  const keepBoth = () => finish([{ id: currentPhoto.id, status: 'keep' }], 0);
+  const swapToCurrent = () => finish([{ id: currentPhoto.id, status: 'keep' }, { id: keptPhoto.id, status: 'drop' }], 0);
+  $('#kept-single').onclick = () => { singleViewIds.add(currentPhoto.id); render(); };
+  if ($('#kept-next')) $('#kept-next').onclick = () => { keptCompareCursor.index++; render(); };
+  $('#controls').innerHTML = `
+    <button class="button decide" id="act-drop-current" aria-label="${t('dropCurrent')}"><i class="ph ph-x"></i><span class="label-long">${t('dropCurrent')}</span><span class="label-short">${t('dropCurrentShort')}</span><kbd>←</kbd></button>
+    <button class="button decide" id="act-keep-both" aria-label="${t('keepBoth')}"><span class="label-long">${t('keepBoth')}</span><span class="label-short">${t('keepBothShort')}</span><kbd>↓</kbd></button>
+    <button class="button icon-only" id="act-undo" title="${t('undoTitle')}" aria-label="${t('undo')}"><i class="ph ph-arrow-counter-clockwise"></i></button>
+    <button class="button decide keep" id="act-swap" aria-label="${t('swapToCurrent')}"><i class="ph ph-circle"></i><span class="label-long">${t('swapToCurrent')}</span><span class="label-short">${t('swapShort')}</span><kbd>→</kbd></button>`;
+  $('#act-drop-current').onclick = dropCurrent;
+  $('#act-keep-both').onclick = keepBoth;
+  $('#act-swap').onclick = swapToCurrent;
+  $('#act-undo').onclick = undoLast;
+  currentKeys = { left: dropCurrent, right: swapToCurrent, down: keepBoth };
 }
 
 // ---------- 두 장 비교 ----------
@@ -1441,7 +1566,10 @@ function renderCompare(stage, [leftPhoto, rightPhoto]) {
     shot.append(cloneMark('keep'));
     fullImageUrl(index === 0 ? leftPhoto : rightPhoto).then((url) => { const image = $('img', shot); if (image.isConnected) image.src = url; });
   });
+  let deciding = false; // 표시를 그리는 동안 들어온 두 번째 입력은 무시한다
   const keepOne = (winnerIndex) => {
+    if (deciding) return;
+    deciding = true;
     const winner = winnerIndex === 0 ? leftPhoto : rightPhoto;
     const loser = winnerIndex === 0 ? rightPhoto : leftPhoto;
     $('.mark', shots[winnerIndex]).classList.add('drawn');
@@ -1507,7 +1635,7 @@ function diagnosticsText() {
 }
 
 function currentPhotoOnStage() {
-  return $('#stage .frame') && stagePhotoId ? state.photoById.get(stagePhotoId) : null;
+  return ($('#stage .frame') || $('#stage .kept-compare')) && stagePhotoId ? state.photoById.get(stagePhotoId) : null;
 }
 
 // ---------- 크게 보기 ----------
@@ -1772,5 +1900,9 @@ $('#language-select').onchange = (event) => {
 // 설치형 웹앱: 한 번 열고 나면 인터넷 없이도 동작하게 앱 파일을 기기에 보관한다
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   navigator.serviceWorker.register('./sw.js').catch((error) => console.warn('service worker', error));
+}
+// 진단용: ?debug=1 이면 콘솔에서 상태를 볼 수 있게 한다 (사진 데이터는 이 기기 안에만 있다)
+if (new URLSearchParams(location.search).get('debug') === '1') {
+  window.momentSelectDebug = { state, faceEngine, hashDistance, correlation, looksSimilar, similarKeptPhotos };
 }
 applyLanguage();
