@@ -51,7 +51,7 @@ const MESSAGES = {
 
     // ---------- 사진 종류 ----------
     presets: {
-      wedding: { label: '웨딩과 스냅', hint: '차분한 포즈가 많아서 웃음보다 선명도와 찡그림 없음을 크게 봐요. 눈 감은 사진은 합성 요청 후보로 표시만 해요.' },
+      wedding: { label: '웨딩과 스냅', hint: '차분한 포즈가 많아서 웃음보다 선명도와 찡그림 없음을 크게 봐요.' },
       travel: { label: '여행', hint: '풍경 비중이 커서 사진 전체의 초점과 노출을 크게 봐요.' },
       event: { label: '행사와 모임', hint: '단체 사진이 많아서 얼굴이 다 보이는지와 웃음을 크게 봐요.' },
       family: { label: '아이와 가족', hint: '움직임이 많아서 인물 선명도를 가장 크게 보고 웃음도 봐요.' },
@@ -71,7 +71,11 @@ const MESSAGES = {
     learnedToast: (count) => `결정 ${count}건으로 취향을 배웠어요. 남은 사진 순서를 다시 정했어요. 점수 기준에서 무엇을 중요하게 보는지 확인할 수 있어요.`,
 
     // ---------- 점수 항목, 인원 분류 ----------
-    features: { subjectSharp: '인물 선명도', focusSharp: '초점 부분 선명도', exposure: '노출', expression: '찡그림 없음', smile: '웃음', framing: '얼굴 안 잘림', clean: '노이즈 적음' },
+    features: { subjectSharp: '인물 선명도', focusSharp: '초점 부분 선명도', exposure: '노출', expression: '찡그림 없음', smile: '웃음', framing: '얼굴 안 잘림', clean: '노이즈 적음', eyesOpen: '눈 뜸' },
+    fieldEyes: '눈 감은 사진', eyesCheck: '눈 감은 사진은 점수 깎기',
+    eyesHint: '눈을 감아도 괜찮거나, 웨딩 촬영처럼 작가가 눈을 합성해 준다면 체크를 해제하세요.',
+    eyesOnToast: '눈 감은 사진의 점수를 깎도록 바꿨어요. 남은 사진 순서를 다시 정했어요.',
+    eyesOffToast: '눈 감은 사진도 감점하지 않도록 바꿨어요. 남은 사진 순서를 다시 정했어요.',
     categories: { all: '전체', solo: '혼자', pair: '둘', small: '소그룹', crowd: '단체', none: '인물 없음', unknown: '분류 안 됨' },
 
     // ---------- 고르기 화면 ----------
@@ -138,7 +142,8 @@ const MESSAGES = {
     criteriaServer: ({ preset, min }) => `다른 사용자들의 ${preset} 사진 결정으로 만든 기본 기준이에요. 결정이 ${min}건 쌓이면 내 취향으로 다시 맞춰요.`,
     criteriaPreset: ({ preset, perClass, min }) => `${preset} 기본 기준이에요. 남김과 뺌이 각각 ${perClass}건 이상, 합쳐서 ${min}건이 쌓이면 내 취향으로 다시 맞춰요.`,
     colItem: '항목', colWeight: '비중', colThis: '이 사진',
-    criteriaNote: '눈 감음은 점수에 넣지 않고 표시만 해요. 선명도와 노이즈는 이 폴더 사진들 사이의 순위로 계산해요.',
+    criteriaNote: '눈 감은 사진은 점수에 넣지 않고 표시만 해요. 선명도와 노이즈는 이 폴더 사진들 사이의 순위로 계산해요.',
+    criteriaNoteEyesOn: '눈 감은 사진은 점수를 깎아요. 선명도와 노이즈는 이 폴더 사진들 사이의 순위로 계산해요.',
 
     // ---------- 내보내기 ----------
     exportTitle: '내보내기',
@@ -217,7 +222,7 @@ const MESSAGES = {
     permissionNeeded: 'Allow access to read the folder.',
 
     presets: {
-      wedding: { label: 'Wedding and portraits', hint: 'Posed shots are often calm, so sharpness and the absence of frowns count more than smiles. Closed eyes are only flagged, since studios can retouch them.' },
+      wedding: { label: 'Wedding and portraits', hint: 'Posed shots are often calm, so sharpness and the absence of frowns count more than smiles.' },
       travel: { label: 'Travel', hint: 'Lots of scenery, so overall focus and exposure count most.' },
       event: { label: 'Events and gatherings', hint: 'Lots of group shots, so visible faces and smiles count more.' },
       family: { label: 'Kids and family', hint: 'Lots of movement, so subject sharpness counts most, with smiles next.' },
@@ -235,7 +240,11 @@ const MESSAGES = {
     skipFacesToast: 'The remaining photos are analyzed for sharpness and exposure only.',
     learnedToast: (count) => `Learned your taste from ${count} decisions and reordered the remaining photos. Open Scoring to see what matters most now.`,
 
-    features: { subjectSharp: 'Subject sharpness', focusSharp: 'In-focus area sharpness', exposure: 'Exposure', expression: 'No frowns', smile: 'Smiles', framing: 'Faces not cut off', clean: 'Low noise' },
+    features: { subjectSharp: 'Subject sharpness', focusSharp: 'In-focus area sharpness', exposure: 'Exposure', expression: 'No frowns', smile: 'Smiles', framing: 'Faces not cut off', clean: 'Low noise', eyesOpen: 'Eyes open' },
+    fieldEyes: 'Closed eyes', eyesCheck: 'Lower the score of closed-eye shots',
+    eyesHint: 'Uncheck this if closed eyes are fine, or if your photographer will retouch them, as wedding studios often do.',
+    eyesOnToast: 'Closed-eye shots now score lower. The remaining photos were reordered.',
+    eyesOffToast: 'Closed-eye shots are no longer penalized. The remaining photos were reordered.',
     categories: { all: 'All', solo: 'Solo', pair: 'Two', small: 'Small group', crowd: 'Crowd', none: 'No people', unknown: 'Unsorted' },
 
     compareToggle: 'Side by side', criteriaButton: 'Scoring', filmstripAria: 'Up next',
@@ -300,7 +309,8 @@ const MESSAGES = {
     criteriaServer: ({ preset, min }) => `Default weights for ${preset}, built from other people's choices. After ${min} decisions it adapts to your taste.`,
     criteriaPreset: ({ preset, perClass, min }) => `Default weights for ${preset}. Once you have at least ${perClass} keeps and ${perClass} drops, ${min} in total, it adapts to your taste.`,
     colItem: 'Factor', colWeight: 'Weight', colThis: 'This photo',
-    criteriaNote: 'Closed eyes are flagged but never scored. Sharpness and noise are ranked against the other photos in this set.',
+    criteriaNote: 'Closed eyes are flagged but not scored. Sharpness and noise are ranked against the other photos in this set.',
+    criteriaNoteEyesOn: 'Closed-eye shots score lower. Sharpness and noise are ranked against the other photos in this set.',
 
     exportTitle: 'Export',
     summaryBoth: ({ nameA, nameB, keepA, keepB, both, onlyA, onlyB }) => `${nameA} kept <b>${keepA}</b> and ${nameB} kept <b>${keepB}</b>. <b>${both}</b> were kept by both, ${onlyA + onlyB} by only one (${nameA} ${onlyA}, ${nameB} ${onlyB}).`,
