@@ -1,6 +1,6 @@
 // 모먼트 셀렉 서비스 워커
 // 앱 파일만 기기에 보관해서 오프라인으로 열리게 한다. 사진은 다루지 않는다.
-const CACHE_NAME = 'moment-select-v5';
+const CACHE_NAME = 'moment-select-v6';
 // 앱을 이루는 파일 전체 (라이브러리, 모델, 글꼴 포함)
 const APP_FILES = [
   './',
