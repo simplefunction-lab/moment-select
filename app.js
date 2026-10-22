@@ -33,8 +33,11 @@ const EYE_CHECK_MAX_YAW = 0.22;           // 고개가 이보다 돌아가 있�
 const EYE_CHECK_MIN_CONFIDENCE = 0.6;     // 얼굴 검출 확신이 이보다 낮으면 눈을 판정하지 않음
 const FOCUS_GRID = 4;                     // 초점 부분을 찾으려고 사진을 4x4 칸으로 나눈다
 const FOCUS_TOP_TILES = 3;                // 가장 선명한 3칸 평균을 '초점 맞은 부분 선명도'로 쓴다
-const SIMILAR_HASH_DISTANCE = 12;
-const SIMILAR_TIME_GAP_MS = 10_000;
+const SIMILAR_HASH_DISTANCE = 12;       // dHash 차이가 이 이하면 바로 비슷한 컷
+const SIMILAR_HASH_LOOSE = 22;          // 이 이하이면서 작은 흑백 이미지 상관도가 높으면 비슷한 컷 (구도가 조금 바뀐 경우)
+const SIMILAR_CORRELATION = 0.6;        // 16x12 흑백 이미지 상관도 기준
+const SIMILAR_TIME_GAP_MS = 90_000;     // 촬영 시각이 이 간격 안이어야 같은 묶음 (시각 정보가 있을 때)
+const SIMILAR_WINDOW = 8;               // 촬영 순서로 앞쪽 몇 장까지 비교할지
 const GROUP_MAX_SIZE = 12;
 const RECOMMEND_RATIO = 0.4;              // 점수 상위 40% 단위를 먼저 보여준다
 const SCORE_SCALE = 8;                    // 가중합(0~1)을 로지스틱 모델로 바꿀 때의 기울기
@@ -498,6 +501,20 @@ function differenceHash() {
   }
   return hashWords.map((word) => word >>> 0);
 }
+// 16x12로 줄인 흑백 이미지를 평균 0, 길이 1로 맞춘 벡터. 두 벡터의 내적이 상관도(-1~1)
+const tinyCanvas = document.createElement('canvas');
+tinyCanvas.width = 16; tinyCanvas.height = 12;
+const tinyContext = tinyCanvas.getContext('2d', { willReadFrequently: true });
+function tinyLumaVector() {
+  tinyContext.drawImage(analysisCanvas, 0, 0, 16, 12);
+  const gray = toGrayscale(tinyContext, 16, 12);
+  const mean = gray.reduce((sum, value) => sum + value, 0) / gray.length;
+  const centered = Array.from(gray, (value) => value - mean);
+  const length = Math.hypot(...centered) || 1;
+  return centered.map((value) => Math.round((value / length) * 10000) / 10000);
+}
+const correlation = (leftVector, rightVector) => leftVector.reduce((sum, value, index) => sum + value * rightVector[index], 0);
+
 function popCount(word) { word -= (word >>> 1) & 0x55555555; word = (word & 0x33333333) + ((word >>> 2) & 0x33333333); return (((word + (word >>> 4)) & 0x0f0f0f0f) * 0x01010101) >>> 24; }
 const hashDistance = (leftHash, rightHash) => popCount((leftHash[0] ^ rightHash[0]) >>> 0) + popCount((leftHash[1] ^ rightHash[1]) >>> 0);
 
@@ -600,6 +617,7 @@ async function analyzeOne(photo) {
     noise,
     light,
     hash: differenceHash(),
+    tiny: tinyLumaVector(),
     faces: await analyzeFaces(gray, smooth, width, height, noiseFloor, light.mean), // null이면 얼굴 분석을 하지 않음
   };
   photo.takenAt = takenAt;
@@ -845,32 +863,50 @@ function categoryOf(photo) {
 }
 const hasClosedEyes = (photo) => mainFacesOf(photo).some((face) => face.eyesClosed);
 
+// 두 사진이 같은 순간의 비슷한 컷인지: 해시가 아주 가깝거나, 조금 멀어도 전체 명암 배치가 닮았으면
+function looksSimilar(leftPhoto, rightPhoto) {
+  if (leftPhoto.analysis.failed || rightPhoto.analysis.failed) return false;
+  const distance = hashDistance(leftPhoto.analysis.hash, rightPhoto.analysis.hash);
+  if (distance <= SIMILAR_HASH_DISTANCE) return true;
+  if (distance > SIMILAR_HASH_LOOSE || !leftPhoto.analysis.tiny || !rightPhoto.analysis.tiny) return false;
+  return correlation(leftPhoto.analysis.tiny, rightPhoto.analysis.tiny) >= SIMILAR_CORRELATION;
+}
+
+// 비슷한 컷 묶기: 촬영 순서로 앞쪽 여러 장과 비교해서 이어지는 것끼리 한 묶음으로 합친다 (union-find)
+// 바로 옆 사진만 비교하던 방식은 사이에 다른 사진이 끼거나 몇십 초 뒤에 다시 찍은 컷을 놓쳤다
 function buildSimilarGroups() {
   state.groups = new Map();
   const ordered = [...state.photos].sort((left, right) => {
     if (left.takenAt && right.takenAt && left.takenAt !== right.takenAt) return left.takenAt - right.takenAt;
     return left.relPath.localeCompare(right.relPath, undefined, { numeric: true });
   });
-  let currentRun = [];
-  const flushRun = () => {
-    if (currentRun.length >= 2) {
-      const groupId = `g${state.groups.size + 1}`;
-      state.groups.set(groupId, currentRun.map((photo) => photo.id));
-      for (const photo of currentRun) photo.groupId = groupId;
+  const parentIndex = ordered.map((_, index) => index); // union-find 부모 표
+  const findRoot = (index) => { while (parentIndex[index] !== index) { parentIndex[index] = parentIndex[parentIndex[index]]; index = parentIndex[index]; } return index; };
+  for (let current = 0; current < ordered.length; current++) {
+    for (let previous = current - 1; previous >= Math.max(0, current - SIMILAR_WINDOW); previous--) {
+      const currentPhoto = ordered[current], previousPhoto = ordered[previous];
+      if (currentPhoto.takenAt && previousPhoto.takenAt && currentPhoto.takenAt - previousPhoto.takenAt > SIMILAR_TIME_GAP_MS) break;
+      if (looksSimilar(currentPhoto, previousPhoto)) parentIndex[findRoot(current)] = findRoot(previous);
     }
-    currentRun = [];
-  };
-  for (const photo of ordered) {
-    photo.groupId = null;
-    const previousPhoto = currentRun[currentRun.length - 1];
-    if (previousPhoto) {
-      const closeInTime = previousPhoto.takenAt && photo.takenAt ? Math.abs(photo.takenAt - previousPhoto.takenAt) <= SIMILAR_TIME_GAP_MS : true;
-      const similarLook = !photo.analysis.failed && !previousPhoto.analysis.failed && hashDistance(photo.analysis.hash, previousPhoto.analysis.hash) <= SIMILAR_HASH_DISTANCE;
-      if (!(closeInTime && similarLook) || currentRun.length >= GROUP_MAX_SIZE) flushRun();
-    }
-    currentRun.push(photo);
   }
-  flushRun();
+  const clusters = new Map(); // 대표 번호에서 사진 목록으로 (촬영 순서 유지)
+  ordered.forEach((photo, index) => {
+    photo.groupId = null;
+    const root = findRoot(index);
+    if (!clusters.has(root)) clusters.set(root, []);
+    clusters.get(root).push(photo);
+  });
+  for (const members of clusters.values()) {
+    if (members.length < 2) continue;
+    // 너무 크면 화면에서 비교하기 어려워서 촬영 순서대로 나눈다
+    for (let offset = 0; offset < members.length; offset += GROUP_MAX_SIZE) {
+      const chunk = members.slice(offset, offset + GROUP_MAX_SIZE);
+      if (chunk.length < 2) continue;
+      const groupId = `g:${chunk[0].id}`; // 첫 사진 기준 id라 다시 열어도 같은 묶음은 같은 id
+      state.groups.set(groupId, chunk.map((photo) => photo.id));
+      for (const photo of chunk) photo.groupId = groupId;
+    }
+  }
   assignGroupBest();
 }
 
