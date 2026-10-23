@@ -19,7 +19,7 @@ Swipe through hundreds of photos and keep the ones you want. Built for the day t
 2. **First pass.** Swipe right to keep, left to drop. The best-scoring shots come first. Near-identical burst shots are grouped so you can pick one from the set.
 3. **Narrow down.** Set how many photos you want. Kept photos come back lowest score first until you reach that number. A side-by-side mode compares the weakest photo with its closest look-alike.
 4. **Second look.** Dropped photos come back highest score first. Anything you rescue is stamped with the time it came back.
-5. **Export.** On a computer (Chrome or Edge, folder opened), sort the folder in place: your picks move into a new folder you name (default `moment_YYMMDD`), and everything else moves into its `others` folder. Nothing is copied, RAW and sidecar files with the same name move along, a `moment-select-moves.txt` record is written, and you can undo. You can also just copy the picks into a new folder. Phones cannot move or delete library photos from a web page, so there you save the picks through the share sheet.
+5. **Export.** On a computer (Chrome or Edge, folder opened), sort the folder in place: your picks move into a new folder you name (default `moment_YYMMDD`), and everything else moves into its `others` folder. Nothing is copied, RAW and sidecar files with the same name move along, subfolders left empty are removed, a `moment-select-moves.txt` record is written, and you can undo (removed subfolders come back). You can also just copy the picks into a new folder. Phones cannot move or delete library photos from a web page, so there you save the picks through the share sheet.
 
 Two people can pick separately and merge: kept by both, or kept by either.
 
@@ -84,7 +84,7 @@ npx serve .
 2. **1차 셀렉:** 오른쪽으로 넘기면 남기고, 왼쪽이면 빼요. 점수 높은 사진부터 나와요. 거의 같은 연사 컷은 한 화면에 모아서 그중 남길 것만 골라요.
 3. **줄이기:** 남길 장수를 정하면, 남긴 사진을 점수 낮은 순으로 다시 보여줘요. 가장 약한 사진과 가장 닮은 사진을 나란히 비교할 수도 있어요.
 4. **다시 보기:** 뺀 사진을 점수 높은 순으로 다시 봐요. 다시 남긴 사진에는 그 시각이 기록돼요.
-5. **내보내기:** 컴퓨터(크롬, 엣지에서 폴더로 열었을 때)에서는 폴더를 그 자리에서 정리해요. 고른 사진은 직접 이름 붙인 새 폴더(기본 `moment_YYMMDD`)로, 나머지는 그 안의 `others` 폴더로 옮겨요. 복사하지 않고, 이름이 같은 RAW나 보정 파일도 함께 옮기며, `moment-select-moves.txt`에 기록을 남기고 되돌릴 수 있어요. 고른 사진만 새 폴더로 복사할 수도 있어요. 휴대폰은 웹페이지가 사진 보관함의 사진을 옮기거나 지울 수 없어서 공유 창으로 고른 사진을 저장해요.
+5. **내보내기:** 컴퓨터(크롬, 엣지에서 폴더로 열었을 때)에서는 폴더를 그 자리에서 정리해요. 고른 사진은 직접 이름 붙인 새 폴더(기본 `moment_YYMMDD`)로, 나머지는 그 안의 `others` 폴더로 옮겨요. 복사하지 않고, 이름이 같은 RAW나 보정 파일도 함께 옮기며, 옮기고 나서 빈 하위 폴더는 지우고, `moment-select-moves.txt`에 기록을 남겨요. 되돌리면 지운 하위 폴더도 다시 생겨요. 고른 사진만 새 폴더로 복사할 수도 있어요. 휴대폰은 웹페이지가 사진 보관함의 사진을 옮기거나 지울 수 없어서 공유 창으로 고른 사진을 저장해요.
 
 두 사람이 따로 고른 뒤 '둘 다 남긴 사진'이나 '한 명이라도 남긴 사진'으로 합칠 수 있어요.
 
