@@ -1,8 +1,8 @@
 {
-  "name": "모먼트 셀렉",
-  "short_name": "모먼트 셀렉",
-  "description": "수백 장 중에서 남길 사진을 넘기며 고르는 도구. 사진은 기기 밖으로 나가지 않아요.",
-  "lang": "ko",
+  "name": "Moment Select",
+  "short_name": "Moment Select",
+  "description": "Swipe through hundreds of photos and keep the ones you want. Your photos never leave your device.",
+  "lang": "en",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
