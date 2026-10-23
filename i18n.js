@@ -26,6 +26,8 @@ const MESSAGES = {
     goalKept: '남긴 사진', goalUnit: '장',
     goalOver: (count) => `${num(count)}장 많음`,
     reviewerAria: '고르는 사람', languageAria: '언어',
+    stepDown: '줄이기', stepUp: '늘리기',
+    pickAsOther: (name) => `${name} 차례로 고르기`,
     defaultNameA: '나', defaultNameB: '파트너',
 
     // ---------- 시작 화면 ----------
@@ -201,7 +203,7 @@ const MESSAGES = {
     targetOver: (count) => `지금 ${count}장 많아요.`, targetUnder: (count) => `${count}장 더 남길 수 있어요.`, targetExact: '딱 맞아요.',
     eyesInList: (count) => ` 눈 감음 의심 ${count}장은 목록 파일에 따로 적어둬요.`,
     mergeTitle: '둘이 고른 결과 합치기',
-    mergeHint: '같은 기기라면 위쪽에서 사람을 바꿔 고르면 돼요. 서로 다른 기기에서 골랐다면 한 사람이 결정 파일을 저장해 보내고, 다른 사람이 같은 사진을 연 상태에서 불러오면 됩니다. 결정은 파일 이름으로 맞추니 같은 원본을 써야 해요.',
+    mergeHint: '같은 기기라면 아래 다른 사람 차례로 고르기를 누르고 한 번 더 고르면 돼요. 서로 다른 기기에서 골랐다면 한 사람이 결정 파일을 저장해 보내고, 다른 사람이 같은 사진을 연 상태에서 불러오면 됩니다. 결정은 파일 이름으로 맞추니 같은 원본을 써야 해요.',
     nameAAria: '첫 번째 사람 이름', nameBAria: '두 번째 사람 이름',
     saveDecisions: (name) => `${name} 결정 파일 저장`, loadDecisions: '다른 사람 결정 파일 불러오기',
     pickedTitle: '고른 사진', pickedCount: (count) => `${num(count)}장`,
@@ -234,6 +236,8 @@ const MESSAGES = {
     goalKept: 'Kept', goalUnit: '',
     goalOver: (count) => `${num(count)} over`,
     reviewerAria: 'Who is picking', languageAria: 'Language',
+    stepDown: 'Fewer', stepUp: 'More',
+    pickAsOther: (name) => `Pick as ${name}`,
     defaultNameA: 'Me', defaultNameB: 'Partner',
 
     setupTitle: 'Pick the photos to keep',
@@ -402,7 +406,7 @@ const MESSAGES = {
     targetOver: (count) => `${num(count)} over.`, targetUnder: (count) => `Room for ${num(count)} more.`, targetExact: 'Right on target.',
     eyesInList: (count) => ` ${count === 1 ? '1 photo with possibly closed eyes is' : `${count} photos with possibly closed eyes are`} listed separately in the file list.`,
     mergeTitle: 'Merge two people\'s picks',
-    mergeHint: 'Same device: switch the person at the top and pick again. Different devices: one person saves a picks file and sends it, and the other loads it with the same photos open. Photos are matched by file name.',
+    mergeHint: 'Same device: tap Pick as the other person and go through the photos again. Different devices: one person saves a picks file and sends it, and the other loads it with the same photos open. Photos are matched by file name.',
     nameAAria: 'First person\'s name', nameBAria: 'Second person\'s name',
     saveDecisions: (name) => `Save picks file (${name})`, loadDecisions: 'Load the other person\'s picks',
     pickedTitle: 'Selected photos', pickedCount: (count) => photosEn(count),

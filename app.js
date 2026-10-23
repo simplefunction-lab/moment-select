@@ -92,7 +92,7 @@ const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시�
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
 const CACHE_VERSION = 'v5';             // 분석 방식이 바뀌면 올린다 (v5: 같은 사람 알아보기, 미적 점수)
-const APP_VERSION = 'v13';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
+const APP_VERSION = 'v14';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
 const ANALYZE_SHEET_MAX = 120;           // 분석 화면에 동시에 보여줄 썸네일 수 (1,000장 넘게 불러와도 화면 요소가 계속 늘지 않게)
 const ETA_WARMUP_PHOTOS = 3;             // 이만큼 분석하기 전에는 남은 시간을 보여주지 않는다 (첫 장은 모델 준비로 느리다)
 const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
@@ -1635,14 +1635,21 @@ $('#tabs').onclick = (event) => {
   const button = event.target.closest('button[data-view]');
   if (button && !button.disabled) setView(button.dataset.view);
 };
-$('#reviewer-select').onchange = (event) => {
-  state.currentReviewer = event.target.value;
+function switchReviewer(reviewerKey) {
+  if (reviewerKey === state.currentReviewer) return;
+  state.currentReviewer = reviewerKey;
   state.undoStack = [];
   rescoreAll();
   buildUnits();
   showToast(t('switchedReviewer', escapeHtml(reviewer().name)), [], 2600);
   render();
+}
+$('#reviewer-toggle').onclick = (event) => {
+  const button = event.target.closest('button[data-reviewer]');
+  if (button) switchReviewer(button.dataset.reviewer);
 };
+// 둘이 고르는 중인지: 두 번째 사람으로 고르고 있거나, 그 사람의 결정이 있거나, 이름을 바꿔 뒀으면
+const pickingAsTwo = () => state.currentReviewer === 'b' || Object.keys(state.reviewers.b.decisions).length > 0 || !isDefaultName(state.reviewers.b.name);
 
 let previousKeepCount = null; // 직전에 그린 남긴 장수 (목표를 맞추는 순간을 알아보려고)
 function renderTopbar() {
@@ -1660,15 +1667,18 @@ function renderTopbar() {
   $('#goal-count').textContent = num(keepCount);
   $('#goal-target').textContent = num(target);
   $('#goal').classList.toggle('hidden', !ready); // 사진을 불러오기 전 시작 화면에서는 '남긴 사진 0 / 목표'를 숨긴다
+  $('#tabs').classList.toggle('hidden', !ready);  // 아직 누를 수 없는 단계 탭도 숨긴다
   $('#goal').classList.toggle('over', keepCount > target);
   $('#goal').classList.toggle('hit', ready && keepCount === target);
-  // 고르는 중에 남긴 장수가 목표와 딱 맞게 바뀌는 순간만 (처음 열 때나 다른 화면에서는 아님)
-  if (ready && PICK_VIEWS.includes(state.view) && previousKeepCount !== null && previousKeepCount !== keepCount && keepCount === target) celebrate();
+  // 목표보다 많이 남겼다가 줄여서 딱 맞춘 순간만 (1차 셀렉에서 남기다가 목표를 지나는 건 아니다)
+  if (ready && PICK_VIEWS.includes(state.view) && previousKeepCount !== null && previousKeepCount > target && keepCount === target) celebrate();
   previousKeepCount = ready ? keepCount : null;
   $('#goal-note').textContent = keepCount > target ? t('goalOver', keepCount - target) : '';
   $('#goal-meter').style.width = `${Math.min(100, (keepCount / target) * 100)}%`;
-  $('#reviewer-select').innerHTML = Object.entries(state.reviewers)
-    .map(([key, value]) => `<option value="${key}" ${key === state.currentReviewer ? 'selected' : ''}>${escapeHtml(value.name)}</option>`).join('');
+  const toggle = $('#reviewer-toggle');
+  toggle.classList.toggle('hidden', !ready || !pickingAsTwo());
+  toggle.innerHTML = Object.entries(state.reviewers)
+    .map(([key, value]) => `<button type="button" role="radio" data-reviewer="${key}" aria-checked="${key === state.currentReviewer}">${escapeHtml(value.name)}</button>`).join('');
 }
 
 function render() {
@@ -1706,7 +1716,7 @@ $('#filters').onclick = (event) => {
   state.categoryFilter = button.dataset.category;
   render();
 };
-$('#compare-input').onchange = (event) => { state.compareMode = event.target.checked; event.target.blur(); render(); };
+$('#compare-toggle').onclick = () => { state.compareMode = !state.compareMode; render(); };
 
 // 필름 띠에서 누른 사진(priorityIds)을 뺀 원래 순서로 큐를 만든다.
 // 띠는 이 순서로 고정해서, 썸네일을 눌러도 띠 전체가 다시 섞이지 않게 한다.
@@ -1772,10 +1782,10 @@ function photoTagsHtml(photo, { showAdded }) {
 
 function renderPickView() {
   const mode = state.view;
-  $('#compare-wrap').classList.toggle('hidden', mode !== 'distill');
+  $('#compare-toggle').classList.toggle('hidden', mode !== 'distill');
   $('#criteria-button').classList.toggle('hidden', !state.settings.useScore);
   $('#cast-button').classList.toggle('hidden', !state.settings.useScore || !state.people.length);
-  $('#compare-input').checked = state.compareMode;
+  $('#compare-toggle').setAttribute('aria-pressed', String(state.compareMode));
   const stage = $('#stage');
   const keepCount = keepIds().length;
   const target = state.settings.target;
@@ -2306,8 +2316,8 @@ $('#criteria').addEventListener('toggle', (event) => {
       ${FEATURE_KEYS.map((key, index) => `<tr><td>${featureLabel(key)}</td><td>${Math.round((Math.max(0, model.theta[index]) / totalPositive) * 100)}%</td>${currentPhoto?.features ? `<td>${Math.round(currentPhoto.features[key] * 100)}</td>` : ''}</tr>`).join('')}
     </table>
     <p class="hint source">${t(state.settings.penalizeClosedEyes ? 'criteriaNoteEyesOn' : 'criteriaNote')}</p>
-    <h2 class="diag-title">${t('diagTitle')}</h2>
-    <p class="hint source">${diagnosticsText()}</p>`;
+    <details class="diag"><summary><h2 class="diag-title">${t('diagTitle')}</h2></summary>
+      <p class="hint source">${diagnosticsText()}</p></details>`;
   $('#criteria-eyes').onchange = (changeEvent) => {
     applyClosedEyesSetting(changeEvent.target.checked);
     $('#criteria').hidePopover();
@@ -2492,6 +2502,8 @@ function renderExportView() {
   const ids = selectionIds(exportBasis);
   const closedEyeCount = ids.filter((id) => hasClosedEyes(state.photoById.get(id))).length;
   const nameA = escapeHtml(state.reviewers.a.name), nameB = escapeHtml(state.reviewers.b.name);
+  const otherKey = state.currentReviewer === 'a' ? 'b' : 'a';
+  const otherName = escapeHtml(state.reviewers[otherKey].name);
   const target = state.settings.target;
 
   wrap.innerHTML = `
@@ -2522,22 +2534,11 @@ function renderExportView() {
         <span class="hint num" id="export-progress"></span>
       </div>
       <div class="row">
-        <label for="export-target" class="hint">${t('targetLabel')}</label><input type="number" id="export-target" min="1" value="${target}">
+        <label for="export-target" class="hint">${t('targetLabel')}</label><span class="stepper"><button type="button" class="step" data-step="-1" aria-label="${t('stepDown')}"><i class="ph ph-minus" aria-hidden="true"></i></button><input type="number" id="export-target" min="1" value="${target}" inputmode="numeric"><button type="button" class="step" data-step="1" aria-label="${t('stepUp')}"><i class="ph ph-plus" aria-hidden="true"></i></button></span>
         <span class="hint">${ids.length > target ? t('targetOver', ids.length - target) : ids.length < target ? t('targetUnder', target - ids.length) : t('targetExact')}${closedEyeCount ? t('eyesInList', closedEyeCount) : ''}</span>
       </div>
     </section>
 
-    <section>
-      <h2>${t('mergeTitle')}</h2>
-      <p class="hint">${t('mergeHint')}</p>
-      <div class="row">
-        <input type="text" id="rename-a" value="${nameA}" style="width:120px" aria-label="${t('nameAAria')}">
-        <input type="text" id="rename-b" value="${nameB}" style="width:120px" aria-label="${t('nameBAria')}">
-        <button class="button" id="decisions-save"><i class="ph ph-download-simple"></i>${t('saveDecisions', escapeHtml(reviewer().name))}</button>
-        <button class="button" id="decisions-load"><i class="ph ph-upload-simple"></i>${t('loadDecisions')}</button>
-        <input type="file" id="decisions-file" accept="application/json" hidden>
-      </div>
-    </section>
 
     <section>
       <h2>${t('pickedTitle')} <span class="hint num">${t('pickedCount', ids.length)}</span></h2>
@@ -2549,7 +2550,19 @@ function renderExportView() {
             <figcaption><span title="${escapeHtml(photo.relPath)}">${escapeHtml(photo.name)}</span>${hasClosedEyes(photo) ? `<i class="ph ph-eye-closed flagged" title="${t('tagEyes')}"></i>` : ''}${decision?.addedAt ? `<i class="ph ph-arrow-u-up-left" title="${t('reAddedTitle')}"></i>` : ''}${exportBasis === 'current' ? `<button class="remove" title="${t('removeTitle')}" aria-label="${t('removeTitle')}"><i class="ph ph-x"></i></button>` : ''}</figcaption>
           </figure>`; }).join('')}
       </div>
-    </section>`;
+    </section>
+    <details class="export-merge" ${bothDecided ? 'open' : ''}>
+      <summary><h2>${t('mergeTitle')}</h2></summary>
+      <p class="hint">${t('mergeHint')}</p>
+      <div class="row"><button class="button" id="pick-as-other"><i class="ph ph-arrow-u-up-left"></i>${t('pickAsOther', otherName)}</button></div>
+      <div class="row">
+        <input type="text" id="rename-a" value="${nameA}" style="width:120px" aria-label="${t('nameAAria')}">
+        <input type="text" id="rename-b" value="${nameB}" style="width:120px" aria-label="${t('nameBAria')}">
+        <button class="button" id="decisions-save"><i class="ph ph-download-simple"></i>${t('saveDecisions', escapeHtml(reviewer().name))}</button>
+        <button class="button" id="decisions-load"><i class="ph ph-upload-simple"></i>${t('loadDecisions')}</button>
+        <input type="file" id="decisions-file" accept="application/json" hidden>
+      </div>
+    </details>`;
 
   if ($('#basis-options')) $('#basis-options').onchange = (event) => { exportBasis = event.target.value; render(); };
   $('#export-target').onchange = (event) => { state.settings.target = Math.max(1, parseInt(event.target.value, 10) || 1); saveProjectSoon(); render(); };
@@ -2578,6 +2591,7 @@ function renderExportView() {
     downloadBlob(new Blob([JSON.stringify(payload)], { type: 'application/json' }), t('decisionFileName', reviewer().name));
   };
   $('#decisions-load').onclick = () => $('#decisions-file').click();
+  $('#pick-as-other').onclick = () => { switchReviewer(otherKey); setView('first'); };
   $('#decisions-file').onchange = async (event) => {
     const file = event.target.files[0];
     if (!file) return;
@@ -2687,7 +2701,7 @@ async function shareNextBatch(ids) {
    ===================================================================== */
 function applyLanguage() {
   applyStaticText();
-  $('#language-select').value = getLanguage();
+  for (const button of document.querySelectorAll('.lang-switch button')) button.setAttribute('aria-pressed', String(button.dataset.lang === getLanguage()));
   $('#pick-note').textContent = t(pickNoteKey);
   if (resumeText) $('#resume-name').textContent = resumeText();
   // 사람 이름이 아직 기본값이면 언어에 맞게 바꾼다 (직접 입력한 이름은 그대로)
@@ -2700,11 +2714,23 @@ function applyLanguage() {
   render();
   renderUpdateBar();
 }
-$('#language-select').onchange = (event) => {
-  setLanguage(event.target.value);
+$('.lang-switch').onclick = (event) => {
+  const button = event.target.closest('button[data-lang]');
+  if (!button || button.dataset.lang === getLanguage()) return;
+  setLanguage(button.dataset.lang);
   applyLanguage();
   saveProjectSoon();
 };
+
+// 숫자 칸의 − / + 버튼 (브라우저 기본 위아래 화살표 대신)
+document.addEventListener('click', (event) => {
+  const step = event.target.closest('.stepper .step');
+  if (!step) return;
+  const input = $('input', step.parentElement);
+  if (Number(step.dataset.step) > 0) input.stepUp(); else input.stepDown();
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+});
 
 // 설치형 웹앱: 한 번 열고 나면 인터넷 없이도 동작하게 앱 파일을 기기에 보관한다
 // 서비스 워커는 앱 파일을 서버에서 먼저 받으므로, 인터넷이 되면 열 때마다 최신 코드가 뜬다.
