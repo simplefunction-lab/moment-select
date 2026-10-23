@@ -11,3 +11,7 @@ renders/
 *.heic
 *.png
 !icons/*.png
+
+# Claude Code local settings and hooks for this machine
+.claude/settings.local.json
+.claude/hooks/
