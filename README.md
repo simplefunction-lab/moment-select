@@ -10,6 +10,7 @@ Swipe through hundreds of photos and keep the ones you want. Built for the day t
 
 - Photos are read and analyzed in the browser. Nothing is uploaded.
 - Face detection, face recognition, the aesthetic model, fonts and icons ship with the app. A Content Security Policy blocks every request to another origin, so the page cannot send anything out even by mistake.
+- The MediaPipe library tries to send usage statistics (task type and timing, no photos) to Google. The same policy blocks it, so nothing leaves the device; you may see one blocked-request error in the developer console.
 - The models (about 15 MB, plus about 18 MB for the closed-eye model when closed-eye scoring is on) download once, the first time you analyze photos, with a note saying what each one is for. After that the app works offline.
 
 ## How it works
@@ -74,6 +75,7 @@ npx serve .
 
 - 사진은 브라우저 안에서 읽고 분석해요. 어디에도 올리지 않아요.
 - 얼굴 분석, 같은 사람 알아보기, 미적 점수 모델과 글꼴, 아이콘을 앱과 함께 배포해요. 콘텐츠 보안 정책(CSP)이 다른 출처로 가는 요청을 모두 막아서, 실수로라도 밖으로 보낼 수 없어요.
+- MediaPipe 라이브러리가 사용 통계(작업 종류와 처리 시간, 사진은 아님)를 구글로 보내려고 해요. 같은 정책이 막아서 기기 밖으로 나가는 것은 없고, 개발자 도구 콘솔에 막힌 요청 오류가 한 번 보일 수 있어요.
 - 모델(약 15MB, 눈 감은 사진 감점을 켜면 눈 감음 모델 약 18MB 추가)은 처음 분석할 때 한 번만 받아요. 받는 동안 어떤 용도의 모델인지 보여줘요. 그다음부터는 인터넷 없이도 동작해요.
 
 ### 사용 흐름
