@@ -60,7 +60,11 @@ const COLLECT_ENDPOINT = ''; // POST 로 익명 학습 데이터를 보낸다
 
 // ---------- 실행 환경 ----------
 const canPickFolder = 'showDirectoryPicker' in window;      // 폴더를 직접 읽고 쓸 수 있는 브라우저 (데스크톱 크롬, 엣지 등)
-const isTouchDevice = matchMedia('(pointer: coarse)').matches; // 휴대폰, 태블릿
+// 휴대폰, 태블릿. 일부 Android Chrome은 pointer: coarse를 알리지 않아서 터치 지점 수와 기기 이름도 본다
+const isTouchDevice = matchMedia('(pointer: coarse)').matches || (navigator.maxTouchPoints > 0 && /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent));
+document.documentElement.classList.toggle('touch', isTouchDevice);
+// container queries를 모르는 브라우저(Chrome 104 이하, Safari 15 이하)는 사진 카드 크기를 직접 맞춘다
+const supportsContainerQueries = CSS.supports('container-type: size');
 const canShareFiles = Boolean(navigator.canShare?.({ files: [new File([''], 'probe.jpg', { type: 'image/jpeg' })] })); // 공유 시트로 파일 저장 가능
 const SHARE_BATCH_SIZE = 10; // 공유 시트 한 번에 넘길 장수
 
@@ -92,7 +96,7 @@ const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시�
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
 const CACHE_VERSION = 'v5';             // 분석 방식이 바뀌면 올린다 (v5: 같은 사람 알아보기, 미적 점수)
-const APP_VERSION = 'v15';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
+const APP_VERSION = 'v16';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
 const ANALYZE_SHEET_MAX = 120;           // 분석 화면에 동시에 보여줄 썸네일 수 (1,000장 넘게 불러와도 화면 요소가 계속 늘지 않게)
 const ETA_WARMUP_PHOTOS = 3;             // 이만큼 분석하기 전에는 남은 시간을 보여주지 않는다 (첫 장은 모델 준비로 느리다)
 const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
@@ -251,10 +255,15 @@ function saveProjectSoon() {
    ===================================================================== */
 let presetTouched = false; // 사용자가 사진 종류를 직접 골랐는지 (안 골랐으면 언어를 바꿀 때 기본값도 바꾼다)
 let targetTouched = false; // 사용자가 남길 장수를 직접 바꿨는지 (안 바꿨으면 사진 종류마다 기본 장수를 쓴다)
+// 고른 라디오의 label에 checked 클래스를 붙인다 (선택 표시를 :has 없이 그리려고)
+function markCheckedLabels(container) {
+  for (const label of container.querySelectorAll('label')) label.classList.toggle('checked', Boolean($('input', label)?.checked));
+}
 function renderPresetOptions() {
   $('#preset-options').innerHTML = presetOrder().map((key) =>
     `<label><input type="radio" name="preset" value="${key}" ${key === state.settings.preset ? 'checked' : ''}>${presetText(key).label}</label>`).join('');
   $('#preset-hint').textContent = presetText(state.settings.preset).hint;
+  markCheckedLabels($('#preset-options'));
   renderTargetHint();
 }
 // 여행에서 20장이면 '인스타그램 캐러셀 한 번 분량'이라고 알려준다
@@ -1849,6 +1858,20 @@ function renderPickView() {
   return renderSingle(stage, head, queue.slice(1, 3).map((photo) => photo.id), 'rescue');
 }
 
+// container queries가 없으면 카드(사진 비율 그대로)를 무대 안에 들어가는 가장 큰 크기로 직접 맞춘다
+function fitFramesWithoutContainerQueries() {
+  if (supportsContainerQueries) return;
+  const stage = $('#stage');
+  const style = getComputedStyle(stage);
+  const width = stage.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+  const height = stage.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+  for (const frame of stage.querySelectorAll('.deck > .frame')) {
+    const ratio = parseFloat(frame.style.getPropertyValue('--ratio')) || 1.5;
+    frame.style.width = `${Math.max(0, Math.min(width, height * ratio))}px`;
+  }
+}
+if (!supportsContainerQueries) addEventListener('resize', fitFramesWithoutContainerQueries);
+
 // ---------- 앰비언트 배경: 지금 사진을 크게 흐려 화면 전체에 깐다 ----------
 let ambientUrl = '';
 function setAmbient(url) {
@@ -1927,6 +1950,7 @@ function renderSingle(stage, photo, preloadIds, stageName) {
         <div class="tags">${photoTagsHtml(photo, { showAdded: stageName === 'distill' })}<span class="tag path">${escapeHtml(photo.relPath)}</span></div>
       </div>
     </div>`;
+  fitFramesWithoutContainerQueries();
   const frame = $('.frame.current', stage);
   const peek = $('.frame.peek', stage);
   if (nextPhoto) frame.dataset.nextId = nextPhoto.id;
@@ -2674,7 +2698,7 @@ function renderExportView() {
       </div>
     </details>`;
 
-  if ($('#basis-options')) $('#basis-options').onchange = (event) => { exportBasis = event.target.value; render(); };
+  if ($('#basis-options')) { markCheckedLabels($('#basis-options')); $('#basis-options').onchange = (event) => { exportBasis = event.target.value; render(); }; }
   $('#export-target').onchange = (event) => { state.settings.target = Math.max(1, parseInt(event.target.value, 10) || 1); saveProjectSoon(); render(); };
   $('#export-list').onclick = async () => {
     // http로 연 주소나 권한이 막힌 브라우저는 클립보드를 쓸 수 없다. 그때는 목록 파일로 내려받는다

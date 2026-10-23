@@ -115,8 +115,9 @@
   .segmented label { display: flex; align-items: center; height: 34px; padding: 0 12px; cursor: pointer; border-right: 1px solid var(--rule); font-weight: 550; }
   .segmented label:last-child { border-right: none; }
   .segmented input { position: absolute; opacity: 0; pointer-events: none; }
-  .segmented label:has(input:checked) { background: var(--ink); color: var(--surface); }
-  .segmented label:has(input:focus-visible) { outline: 2px solid var(--marker); outline-offset: -2px; }
+  /* 선택 표시는 app.js가 붙이는 checked 클래스로 (:has를 모르는 Chrome 104 이하, Safari 15.3 이하에서도 보이게) */
+  .segmented label.checked { background: var(--ink); color: var(--surface); }
+  .segmented label:focus-within { outline: 2px solid var(--marker); outline-offset: -2px; }
   .check { display: flex; gap: 10px; align-items: flex-start; }
   .check input { margin-top: 3px; }
   .start-row { display: flex; align-items: center; gap: 10px; margin-top: 28px; flex-wrap: wrap; }
@@ -337,7 +338,7 @@
   .quick .segmented label { flex: 0 0 auto; } /* 칩은 글자 폭만큼, 넘치면 다음 줄로 (한 칩이 한 줄을 다 차지하지 않게) */
   .segmented label:hover { background: #fff; }
   .segmented label:active { transform: scale(.96); }
-  .segmented label:has(input:checked) { background: var(--ink); border-color: var(--ink); color: var(--surface); box-shadow: 0 6px 16px -8px rgba(30, 37, 35, .6); }
+  .segmented label.checked { background: var(--ink); border-color: var(--ink); color: var(--surface); box-shadow: 0 6px 16px -8px rgba(30, 37, 35, .6); }
   .quick input[type=number] { border-radius: 12px; background: rgba(255, 255, 255, .8); }
   /* 사진 고르기 버튼: 펜슬 빨강에 빛 */
   .start-row .button.primary { height: 54px; padding: 0 22px; border-radius: var(--radius-l); font-size: 16px; font-weight: 650; border: none;
@@ -492,6 +493,7 @@
   @media (pointer: coarse) {
     #act-zoom, #act-faces { display: none; }
   }
+  html.touch #act-zoom, html.touch #act-faces { display: none; } /* 손가락 기기인데 pointer: coarse를 알리지 않는 브라우저 */
   /* 버튼이 네 개 이상인 줄(비교 화면)에서는 되돌리기 글자를 빼서 결정 버튼이 두 줄로 꺾이지 않게 */
   .controls:has(.decide ~ .decide ~ .decide) .icon-only.undo { width: 46px; padding: 0; }
   .controls:has(.decide ~ .decide ~ .decide) .undo .undo-label { display: none; }
@@ -601,6 +603,18 @@
     .controls .decide > i { display: none; }
     .controls .icon-only { width: 40px; }
   }
+  /* 키가 작은 휴대폰(높이 760px 이하): 제목과 간격을 줄여 사진 고르기 버튼이 첫 화면에 들어오게 */
+  @media (max-width: 760px) and (max-height: 760px) {
+    .setup { padding-top: 18px; }
+    .hero h1 { font-size: 30px; }
+    .hero .lede { margin-top: 8px; font-size: 15px; }
+    .privacy { margin-top: 10px; padding-top: 6px; padding-bottom: 6px; }
+    .quick { margin-top: 14px; }
+    .quick .field { padding: 10px 0; }
+    #preset-hint, #target-hint { display: none; }
+    .start-row { margin-top: 16px; }
+  }
+  html.touch kbd { display: none; }
   /* 손가락으로 쓰는 기기에서는 키보드 안내를 숨긴다 */
   @media (pointer: coarse) {
     kbd { display: none; }
