@@ -96,7 +96,7 @@ const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시�
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
 const CACHE_VERSION = 'v5';             // 분석 방식이 바뀌면 올린다 (v5: 같은 사람 알아보기, 미적 점수)
-const APP_VERSION = 'v24';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
+const APP_VERSION = 'v25';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
 const ANALYZE_SHEET_MAX = 120;           // 분석 화면에 동시에 보여줄 썸네일 수 (1,000장 넘게 불러와도 화면 요소가 계속 늘지 않게)
 const ETA_WARMUP_PHOTOS = 3;             // 이만큼 분석하기 전에는 남은 시간을 보여주지 않는다 (첫 장은 모델 준비로 느리다)
 const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
@@ -231,8 +231,10 @@ async function dbSet(key, value) {
   return new Promise((resolve) => {
     const transaction = db.transaction('kv', 'readwrite');
     transaction.objectStore('kv').put(value, key);
+    try { transaction.commit?.(); } catch { /* 이미 중단된 트랜잭션: onabort가 처리한다 */ } // 창이 닫히는 중이어도 바로 확정되게 (자동 확정을 기다리면 닫히면서 취소될 수 있다)
     transaction.oncomplete = () => resolve(true);
     transaction.onerror = () => resolve(false);
+    transaction.onabort = () => resolve(false); // 저장 공간이 모자라면 error 없이 abort만 온다
   });
 }
 let saveTimer = null;
@@ -339,19 +341,38 @@ async function loadPriorModel() {
 
 // source: 다음에 열 때 이어서 고를 수 있게 기억할 정보 {kind: handle | folder | photos, key, count?, first?}
 // key는 저장 이름이라 언어와 상관없어야 한다 (화면에 보이는 folderName은 언어마다 다를 수 있다)
+// 같은 탭에서 다른 폴더를 열 때 앞 폴더의 결정, 되돌리기, 라운드 기록이 따라오지 않게 처음 상태로 돌린다
+function resetProjectState() {
+  state.reviewers = { a: { name: t('defaultNameA'), decisions: {} }, b: { name: t('defaultNameB'), decisions: {} } };
+  state.currentReviewer = 'a';
+  state.models = { a: null, b: null };
+  state.rounds = { a: { distill: [], rescue: [] }, b: { distill: [], rescue: [] } };
+  state.dividerSeen = { a: false, b: false };
+  state.sentSampleCount = { a: 0, b: 0 };
+  state.expandedGroups = new Set();
+  state.undoStack = [];
+  state.priorityIds = [];
+  state.categoryFilter = 'all';
+  state.castKeys = null;
+  burstSelection = { key: null, selected: new Set() };
+}
 async function startWithEntries(folderName, imageEntries, source = { kind: 'handle', key: folderName }) {
+  flushPendingDecision();
+  saveProjectNow(); // 앞 폴더에서 아직 저장 안 된 결정
+  resetProjectState();
   applySettingsFromForm();
   state.folderName = folderName;
   state.projectKey = source.key;
-  // 예전 판은 사진 고르기를 화면 문구(folderName)로 저장했다
-  const savedProject = await dbGet(`project:${source.key}`) ?? (source.key !== folderName ? await dbGet(`project:${folderName}`) : undefined);
+  // 예전 판은 사진 고르기를 화면 문구(folderName)로 저장했다. 폴더로 연 경우는 이름이 같은 다른 폴더 것일 수 있어서 찾지 않는다
+  const savedProject = await dbGet(`project:${source.key}`) ?? (source.kind !== 'handle' && source.key !== folderName ? await dbGet(`project:${folderName}`) : undefined);
   dbSet('lastProject', { kind: source.kind, key: source.key, count: source.count, first: source.first }); // 폴더 핸들은 lastHandle에 따로 둔다
-  state.castKeys = null;
-  if (savedProject && savedProject.settings?.preset === state.settings.preset) {
-    // 같은 폴더, 같은 사진 종류로 다시 열면 결정과 학습 결과를 이어서 쓴다
-    state.reviewers.a.decisions = savedProject.reviewers?.a?.decisions ?? {};
-    state.reviewers.b.decisions = savedProject.reviewers?.b?.decisions ?? {};
-    state.models = savedProject.models ?? state.models;
+  if (savedProject) {
+    // 같은 폴더를 다시 열면 결정을 이어서 쓴다. 사진 종류를 바꿨으면 학습 결과만 새로 배운다 (결정은 사용자가 고른 것이라 그대로)
+    for (const reviewerKey of ['a', 'b']) {
+      state.reviewers[reviewerKey].decisions = savedProject.reviewers?.[reviewerKey]?.decisions ?? {};
+      if (savedProject.reviewers?.[reviewerKey]?.name) state.reviewers[reviewerKey].name = savedProject.reviewers[reviewerKey].name;
+    }
+    if (savedProject.settings?.preset === state.settings.preset) state.models = savedProject.models ?? state.models;
     // 점수 항목 수가 바뀐 예전 학습 결과는 쓸 수 없으니 버리고 다시 배운다
     for (const reviewerKey of Object.keys(state.models)) if (state.models[reviewerKey]?.theta?.length !== FEATURE_KEYS.length) state.models[reviewerKey] = null;
     state.rounds = savedProject.rounds ?? state.rounds;
@@ -365,7 +386,7 @@ async function startWithEntries(folderName, imageEntries, source = { kind: 'hand
   state.organize = savedProject?.organize ?? null;
   // 지난번에 이 폴더를 정리했으면(또는 도중에 끊겼으면) 그 기록으로 되돌릴 수 있게 하고, 옮겨진 사진은 예전 결정과 잇는다
   organizeRecord = state.rootHandle ? await dbGet(organizeKey()) ?? null : null;
-  organizeState = organizeRecord ? { status: organizeRecord.status === 'done' ? 'done' : 'interrupted', done: organizeRecord.moves.length, total: organizeRecord.moves.length, message: '' } : { status: 'idle', done: 0, total: 0, message: '' };
+  organizeState = organizeRecord ? { status: ['done', 'missing'].includes(organizeRecord.status) ? organizeRecord.status : 'interrupted', done: organizeRecord.moves.length, total: organizeRecord.moves.length, message: '' } : { status: 'idle', done: 0, total: 0, message: '' };
   const movedIdByPath = new Map((organizeRecord?.moves ?? []).filter((move) => move.isPhoto).map((move) => [move.to, move.id]));
   if (state.rootHandle?.getDirectoryHandle && !state.organize && imageEntries.some((entry) => entry.dir)) {
     const answer = await askDialog({ title: t('organizeAskTitle'), body: t('organizeAskBody', escapeHtml(folderName)), input: { label: t('organizeNameLabel'), value: defaultOrganizeName() }, confirm: t('organizeYes'), cancel: t('organizeNo') });
@@ -394,6 +415,25 @@ async function startWithEntries(folderName, imageEntries, source = { kind: 'hand
   await analyzeAll();
 }
 
+// 폴더마다 결정과 정리 기록을 따로 저장하는 열쇠. 이름만 쓰면 이름이 같은 다른 폴더(SD카드의 100CANON, DCIM 등)가
+// 결정과 정리 기록을 나눠 쓴다. 연 폴더의 핸들을 기억해 두고 isSameEntry로 같은 폴더인지 확인한다.
+// 처음 보는 폴더는 예전 판과 같이 이름을 쓰고, 이름이 이미 다른 폴더 것이면 'Trip#2'처럼 번호를 붙인다
+async function folderKeyFor(handle) {
+  let known = await dbGet('folderKeys');
+  if (!known) { // 이 판 이전에 마지막으로 연 폴더는 이름 열쇠를 쓰던 그 폴더로 본다
+    const last = await dbGet('lastHandle');
+    known = last?.isSameEntry ? [{ key: last.name, handle: last }] : [];
+  }
+  for (const entry of known) {
+    if (entry.handle.name === handle.name && await entry.handle.isSameEntry(handle).catch(() => false)) return entry.key;
+  }
+  const taken = new Set(known.map((entry) => entry.key));
+  let key = handle.name;
+  for (let index = 2; taken.has(key); index++) key = `${handle.name}#${index}`;
+  known.push({ key, handle });
+  await dbSet('folderKeys', known);
+  return key;
+}
 $('#pick-folder').onclick = async () => {
   if (!canPickFolder) { $('#fallback-input').click(); return; }
   try {
@@ -401,8 +441,9 @@ $('#pick-folder').onclick = async () => {
     state.skippedFileCount = 0;
     $('#pick-note').textContent = t('pickNoteReading');
     const imageEntries = await collectImageEntries(directoryHandle);
+    const key = await folderKeyFor(directoryHandle);
     dbSet('lastHandle', directoryHandle);
-    await startWithEntries(directoryHandle.name, imageEntries, { kind: 'handle', key: directoryHandle.name, root: directoryHandle });
+    await startWithEntries(directoryHandle.name, imageEntries, { kind: 'handle', key, root: directoryHandle });
   } catch (error) {
     if (error.name !== 'AbortError') showToast(t('folderOpenError', escapeHtml(error.message)));
   }
@@ -486,11 +527,22 @@ function showResume(makeText, buttonKey, onClick) {
   if (!key) return;
   const savedProject = await dbGet(`project:${key}`);
   if (savedProject?.settings) restoreSettingsForm(savedProject);
-  if (handleUsable && (!lastProject || (lastProject.kind === 'handle' && lastProject.key === lastHandle.name))) {
+  if (handleUsable && (!lastProject || lastProject.kind === 'handle')) {
     showResume(() => t('resumeName', lastHandle.name), 'resumeButton', async () => {
-      if (await lastHandle.requestPermission({ mode: 'read' }) !== 'granted') { showToast(t('permissionNeeded')); return; }
-      state.skippedFileCount = 0;
-      await startWithEntries(lastHandle.name, await collectImageEntries(lastHandle), { kind: 'handle', key: lastHandle.name, root: lastHandle });
+      if ($('#resume-button').disabled) return;
+      $('#resume-button').disabled = true; // 두 번 눌러 분석이 두 번 시작되지 않게
+      try {
+        if (await lastHandle.requestPermission({ mode: 'read' }) !== 'granted') { showToast(t('permissionNeeded')); return; }
+        state.skippedFileCount = 0;
+        const imageEntries = await collectImageEntries(lastHandle);
+        await startWithEntries(lastHandle.name, imageEntries, { kind: 'handle', key: lastProject?.key ?? await folderKeyFor(lastHandle), root: lastHandle });
+      } catch (error) {
+        // 폴더를 지웠거나 옮겼으면 핸들로 더 읽을 수 없다
+        showToast(error.name === 'NotFoundError' ? t('resumeMissing', escapeHtml(lastHandle.name)) : t('folderOpenError', escapeHtml(error.message)), [], 6000);
+        if (error.name === 'NotFoundError') $('#resume').classList.add('hidden');
+      } finally {
+        $('#resume-button').disabled = false;
+      }
     });
   } else if (savedProject && lastProject?.kind === 'photos') {
     // 사진 보관함에서 고른 사진은 다시 열 권한이 없어서, 같은 사진을 다시 고르도록 안내한다
@@ -1457,6 +1509,10 @@ function maybeSendStats(force = false) {
   saveProjectSoon();
 }
 addEventListener('pagehide', () => maybeSendStats(true));
+// 고르자마자 창을 닫거나 다른 앱으로 가면 0.3초 늦게 하는 저장을 기다리지 않고 바로 한다
+const saveBeforeLeaving = () => { flushPendingDecision(); if (saveTimer) saveProjectNow(); };
+addEventListener('pagehide', saveBeforeLeaving);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveBeforeLeaving(); });
 
 /* =====================================================================
    인원 분류, 비슷한 컷 묶기, 1차 셀렉 단위
@@ -1601,6 +1657,7 @@ function markRoundSeen(roundName, ids, undoEntry) {
 }
 
 function undoLast() {
+  flushPendingDecision(); // 사진이 날아가는 0.3초 사이에 누르면 방금 결정부터 반영해야 그 결정이 되돌려진다
   const undoEntry = state.undoStack.pop();
   if (!undoEntry) { showToast(t('nothingToUndo'), [], 1500); return; }
   const decisions = state.reviewers[undoEntry.reviewerKey].decisions;
@@ -2088,9 +2145,19 @@ function renderSingle(stage, photo, preloadIds, stageName) {
 // fromX: 손가락으로 끌던 위치 (버튼과 키보드는 0)
 let promotedPhotoId = null; // 뒤에서 앞으로 나온 사진 (다음 그리기에서 등장 애니메이션을 건너뛴다)
 const SWIPE_LEAVE_MS = 320; // 결정을 반영하기까지 (펜슬 표시를 그리고 사진이 나가는 시간). 하루 수백 번 하는 동작이라 짧게
+// 사진이 날아가는 동안 아직 반영하지 않은 결정. 되돌리기나 창 닫기가 그 사이에 오면 먼저 반영한다
+let pendingDecision = null;
+function flushPendingDecision() {
+  if (!pendingDecision) return;
+  const { timer, run } = pendingDecision;
+  pendingDecision = null;
+  clearTimeout(timer);
+  run();
+}
 function leaveFrame(frame, mark, status, onDone, { peek = null, nextId = null, fromX = 0 } = {}) {
   if (frame.dataset.leaving) return;
   frame.dataset.leaving = '1';
+  flushPendingDecision(); // 앞 사진의 결정이 아직 남아 있으면 먼저
   mark.style.opacity = '';
   mark.classList.add('drawn');
   const direction = status === 'keep' ? 1 : -1;
@@ -2106,7 +2173,8 @@ function leaveFrame(frame, mark, status, onDone, { peek = null, nextId = null, f
         { type: 'spring', bounce: 0.1, duration: 0.3 });
     }
   }, fromX ? 0 : 110);
-  setTimeout(() => onDone(status), fromX ? SWIPE_LEAVE_MS - 120 : SWIPE_LEAVE_MS);
+  const run = () => onDone(status);
+  pendingDecision = { run, timer: setTimeout(() => { pendingDecision = null; run(); }, fromX ? SWIPE_LEAVE_MS - 120 : SWIPE_LEAVE_MS) };
 }
 
 // ---------- 사진 확대 ----------
@@ -2732,6 +2800,17 @@ async function createUniqueFolder(root, wanted) {
   const name = await freeFolderName(root, wanted);
   return { name, handle: await root.getDirectoryHandle(name, { create: true }) };
 }
+// 사진과 짝 파일(RAW, XMP)은 같은 번호를 붙여야 짝이 유지된다. 모든 이름이 비어 있는 첫 번호를 함께 쓴다
+function claimGroupNames(used, fileNames) {
+  const parts = fileNames.map((fileName) => { const dot = fileName.lastIndexOf('.'); return dot > 0 ? [fileName.slice(0, dot), fileName.slice(dot)] : [fileName, '']; });
+  for (let index = 1; ; index++) {
+    const candidates = parts.map(([stem, extension], position) => (index === 1 ? fileNames[position] : `${stem} (${index})${extension}`));
+    if (candidates.every((candidate) => !used.has(candidate.toLowerCase()))) {
+      for (const candidate of candidates) used.add(candidate.toLowerCase());
+      return candidates;
+    }
+  }
+}
 // 한 폴더 안에서 이름이 겹치면 'IMG_0001 (2).jpg'처럼 바꾼다
 function claimName(used, fileName) {
   const dot = fileName.lastIndexOf('.');
@@ -2757,9 +2836,10 @@ async function moveFileHandle(fileHandle, fromDir, toDir, newName) {
 }
 // 정리 기록: IndexedDB의 organize:<프로젝트>에 옮길 목록을 10개씩 먼저 적고 옮긴다.
 // 창을 닫았다 열어도 이 기록으로 되돌릴 수 있고, 옮겨진 사진을 예전 결정과 잇는다(경로 → 원래 id).
-// organizeRecord: { name, status: moving | done | failed, time, moves: [{ id, isPhoto, from, to }] } (경로는 고른 폴더 기준)
+// organizeRecord: { name, status: moving | done | failed | missing, time, moves: [{ id, isPhoto, from, to }] } (경로는 고른 폴더 기준)
+// missing: 되돌리다가 못 찾은 파일만 남은 기록
 const ORGANIZE_BATCH = 10;
-let organizeState = { status: 'idle', done: 0, total: 0, message: '' }; // idle | moving | done | interrupted | failed | undoing | undone
+let organizeState = { status: 'idle', done: 0, total: 0, message: '' }; // idle | moving | done | interrupted | failed | missing | undoing | undone
 let organizeRecord = null;
 const organizeKey = () => `organize:${state.projectKey}`;
 const saveOrganizeRecord = () => dbSet(organizeKey(), organizeRecord);
@@ -2794,8 +2874,10 @@ async function organizeFolder(keepIdList) {
   const plan = [];
   for (const photo of photos) {
     const keep = keepSet.has(photo.id);
-    for (const fileHandle of [photo.handle, ...photo.companions]) {
-      const newName = claimName(keep ? used.keep : used.others, fileHandle.name);
+    const fileHandles = [photo.handle, ...photo.companions];
+    const newNames = claimGroupNames(keep ? used.keep : used.others, fileHandles.map((fileHandle) => fileHandle.name));
+    for (const [position, fileHandle] of fileHandles.entries()) {
+      const newName = newNames[position];
       plan.push({ id: photo.id, isPhoto: fileHandle === photo.handle, from: joinPath(dirOf(photo.relPath), fileHandle.name), to: `${targetName}/${keep ? '' : `${OTHERS_FOLDER}/`}${newName}`, keep, fileHandle, photo, fromDir: photo.dir });
     }
   }
@@ -2809,7 +2891,7 @@ async function organizeFolder(keepIdList) {
       const batch = plan.slice(start, start + ORGANIZE_BATCH);
       // 옮기기 전에 이번 묶음을 기록한다. 도중에 창이 닫혀도 다시 열면 되돌릴 수 있다
       organizeRecord.moves.push(...batch.map(({ id, isPhoto, from, to }) => ({ id, isPhoto, from, to })));
-      await saveOrganizeRecord();
+      if (!await saveOrganizeRecord()) throw new Error(t('organizeRecordFailed')); // 기록 없이 옮기면 되돌릴 수 없다
       await writeMoveLog(targetDir, targetName, organizeRecord.moves);
       for (const move of batch) {
         const toDir = move.keep ? targetDir : othersDir;
@@ -2825,6 +2907,19 @@ async function organizeFolder(keepIdList) {
     organizeState.status = 'done';
   } catch (error) {
     console.warn('organize failed', error);
+    if (organizeState.done === 0) {
+      // 하나도 옮기기 전에 멈췄으면 되돌릴 것이 없다. 만든 빈 폴더를 지우고 처음 상태로
+      const targetDir = await state.rootHandle.getDirectoryHandle(organizeRecord.name).catch(() => null);
+      if (targetDir) { await targetDir.removeEntry(MOVE_LOG_NAME).catch(() => {}); await targetDir.removeEntry(OTHERS_FOLDER).catch(() => {}); }
+      await state.rootHandle.removeEntry(organizeRecord.name).catch(() => {});
+      organizeRecord = null;
+      await dbSet(organizeKey(), null);
+      organizeState = { status: 'idle', done: 0, total: 0, message: '' };
+      showToast(t('organizeNotStarted', escapeHtml(error.message)), [], 8000);
+      saveProjectSoon();
+      render();
+      return;
+    }
     organizeRecord.status = 'failed';
     organizeState.status = 'failed';
     organizeState.message = error.message;
@@ -2861,12 +2956,27 @@ async function writeMoveLog(targetDir, targetName, moves) {
   await writable.close();
 }
 // 되돌리기: 기록의 반대 순서로, 원래 폴더와 이름으로. 창을 닫았다 연 뒤에도 같은 기록으로 한다.
-// 옮기기 전에 멈춘 파일은 아직 원래 자리에 있으니 건너뛴다. 만든 폴더는 비어 있으면 지운다
+// 옮기기 전에 멈춘 파일은 아직 원래 자리에 있으니 건너뛴다. 만든 폴더는 비어 있으면 지운다.
+// 원래 자리에 같은 이름 파일이 새로 생겼으면(카메라 번호가 다시 1부터 등) 덮어쓰지 않고 'IMG_0001 (2).jpg'로 돌려놓는다.
+// 옮긴 자리에서도 원래 자리에서도 못 찾은 파일(새 폴더 이름을 바꿨거나 파일을 옮김)은 기록에 남겨 다시 시도할 수 있게 한다
+async function fileExistsAt(filePath) {
+  try { await (await resolveDir(state.rootHandle, dirOf(filePath))).getFileHandle(nameOf(filePath)); return true; } catch { return false; }
+}
+async function freeFileName(dir, wanted) {
+  const dot = wanted.lastIndexOf('.');
+  const stem = dot > 0 ? wanted.slice(0, dot) : wanted, extension = dot > 0 ? wanted.slice(dot) : '';
+  for (let index = 1; ; index++) {
+    const candidate = index === 1 ? wanted : `${stem} (${index})${extension}`;
+    try { await dir.getFileHandle(candidate); } catch { return candidate; }
+  }
+}
 async function undoOrganize() {
   if (!organizeRecord?.moves.length || organizeState.status === 'moving' || organizeState.status === 'undoing') return;
   if (!await ensureWritePermission(state.rootHandle)) { showToast(t('organizePermission')); return; }
   organizeState = { status: 'undoing', done: 0, total: organizeRecord.moves.length, message: '' };
   render();
+  const missing = []; // 어디서도 못 찾은 이동 (원래 순서대로)
+  let restored = 0, renamed = 0;
   try {
     while (organizeRecord.moves.length) {
       const move = organizeRecord.moves.at(-1);
@@ -2874,10 +2984,15 @@ async function undoOrganize() {
       try { sourceDir = await resolveDir(state.rootHandle, dirOf(move.to)); handle = await sourceDir.getFileHandle(nameOf(move.to)); } catch { handle = null; }
       if (handle) {
         const fromDir = await resolveDir(state.rootHandle, dirOf(move.from), true);
-        const restored = await moveFileHandle(handle, sourceDir, fromDir, nameOf(move.from));
+        const backName = await freeFileName(fromDir, nameOf(move.from));
+        if (backName !== nameOf(move.from)) renamed++;
+        const restoredHandle = await moveFileHandle(handle, sourceDir, fromDir, backName);
         const photo = state.photoById.get(move.id);
-        if (photo && move.isPhoto) { photo.handle = restored; photo.dir = fromDir; photo.relPath = move.from; photo.name = nameOf(move.from); }
-        else if (photo) photo.companions = photo.companions.map((companion) => (companion.name === nameOf(move.to) ? restored : companion));
+        if (photo && move.isPhoto) { photo.handle = restoredHandle; photo.dir = fromDir; photo.relPath = joinPath(dirOf(move.from), backName); photo.name = backName; }
+        else if (photo) photo.companions = photo.companions.map((companion) => (companion.name === nameOf(move.to) ? restoredHandle : companion));
+        restored++;
+      } else if (!await fileExistsAt(move.from)) {
+        missing.unshift(move);
       }
       organizeRecord.moves.pop();
       organizeState.done++;
@@ -2886,18 +3001,28 @@ async function undoOrganize() {
         if ($('#organize-progress')) $('#organize-progress').textContent = t('organizeUndoing', organizeState);
       }
     }
-    const targetDir = await state.rootHandle.getDirectoryHandle(organizeRecord.name).catch(() => null);
-    if (targetDir) {
-      await targetDir.removeEntry(MOVE_LOG_NAME).catch(() => {});
-      await targetDir.removeEntry(OTHERS_FOLDER).catch(() => {}); // 비어 있을 때만 지워진다
-      await state.rootHandle.removeEntry(organizeRecord.name).catch(() => {});
+    if (missing.length) {
+      // 못 찾은 파일은 기록에 남긴다. 새 폴더 이름을 원래대로 돌려놓고 다시 누르면 마저 돌려놓는다
+      organizeRecord.moves = missing;
+      organizeRecord.status = 'missing';
+      await saveOrganizeRecord();
+      organizeState = { status: 'missing', done: 0, total: missing.length, message: '' };
+      showToast(t('organizeUndoMissing', { restored, missing: missing.length, name: escapeHtml(organizeRecord.name) }), [], 8000);
+    } else {
+      const targetDir = await state.rootHandle.getDirectoryHandle(organizeRecord.name).catch(() => null);
+      if (targetDir) {
+        await targetDir.removeEntry(MOVE_LOG_NAME).catch(() => {});
+        await targetDir.removeEntry(OTHERS_FOLDER).catch(() => {}); // 비어 있을 때만 지워진다
+        await state.rootHandle.removeEntry(organizeRecord.name).catch(() => {});
+      }
+      organizeRecord = null;
+      await dbSet(organizeKey(), null);
+      organizeState = { status: 'undone', done: 0, total: 0, message: '' };
+      showToast(renamed ? t('organizeUndoneRenamed', renamed) : t('organizeUndone'), [], renamed ? 8000 : 4000);
     }
-    organizeRecord = null;
-    await dbSet(organizeKey(), null);
-    organizeState = { status: 'undone', done: 0, total: 0, message: '' };
-    showToast(t('organizeUndone'));
   } catch (error) {
     console.warn('undo organize failed', error);
+    organizeRecord.moves.unshift(...missing);
     await saveOrganizeRecord();
     organizeState.status = 'failed';
     organizeState.message = error.message;
@@ -2933,8 +3058,10 @@ function organizeSectionHtml(ids) {
   if (organizeState.status === 'done') {
     body = `<p class="organize-result">${t('organizeDone', { count: movedPhotos, name })}</p>
       <div class="row"><button class="button" id="organize-undo"><i class="ph ph-arrow-counter-clockwise"></i>${t('organizeUndo')}</button><span class="hint num" id="organize-progress"></span></div>`;
-  } else if (organizeState.status === 'failed' || organizeState.status === 'interrupted') {
-    const message = organizeState.status === 'interrupted' ? t('organizeInterrupted', { count: organizeRecord.moves.length, name }) : t('organizeError', escapeHtml(organizeState.message));
+  } else if (organizeState.status === 'failed' || organizeState.status === 'interrupted' || organizeState.status === 'missing') {
+    const message = organizeState.status === 'interrupted' ? t('organizeInterrupted', { count: organizeRecord.moves.length, name })
+      : organizeState.status === 'missing' ? t('organizeMissing', { count: organizeRecord.moves.length, name })
+        : t('organizeError', escapeHtml(organizeState.message));
     body = `<p class="organize-result error">${message}</p>
       <div class="row">${organizeRecord?.moves.length ? `<button class="button primary" id="organize-undo"><i class="ph ph-arrow-counter-clockwise"></i>${t('organizeUndo')}</button>` : ''}<span class="hint num" id="organize-progress"></span></div>`;
   } else {
@@ -3061,6 +3188,20 @@ function renderExportView() {
       if (payload.app !== 'moment-select') throw new Error(t('notDecisionFile'));
       const otherKey = state.currentReviewer === 'a' ? 'b' : 'a';
       const matched = Object.fromEntries(Object.entries(payload.decisions).filter(([id]) => state.photoById.has(id)));
+      // 다른 폴더의 파일이거나, 이름이 맞는 사진이 절반도 안 되거나, 상대 결정을 바꾸게 되면 먼저 확인한다
+      // (사진 이름은 카메라마다 IMG_0001처럼 겹쳐서 이름만 맞는다고 같은 사진이 아니다)
+      const total = Object.keys(payload.decisions).length, matchedCount = Object.keys(matched).length;
+      const otherFolder = payload.folder && payload.folder !== state.folderName ? payload.folder : null;
+      const replacing = Object.keys(state.reviewers[otherKey].decisions).length;
+      if (otherFolder || matchedCount * 2 < total || replacing) {
+        const notes = [
+          otherFolder ? t('decisionsOtherFolder', { file: escapeHtml(otherFolder), here: escapeHtml(state.folderName) }) : '',
+          matchedCount * 2 < total ? t('decisionsFewMatch', { matched: matchedCount, total }) : '',
+          replacing ? t('decisionsReplace', { name: escapeHtml(state.reviewers[otherKey].name), count: replacing }) : '',
+        ].filter(Boolean);
+        const answer = await askDialog({ title: t('decisionsConfirmTitle', escapeHtml(payload.reviewer || state.reviewers[otherKey].name)), body: notes.map((note) => `<p>${note}</p>`).join(''), confirm: t('decisionsConfirm'), cancel: t('organizeCancel') });
+        if (!answer.ok) return;
+      }
       state.reviewers[otherKey].decisions = matched;
       if (payload.reviewer) state.reviewers[otherKey].name = payload.reviewer;
       saveProjectSoon();
@@ -3114,7 +3255,15 @@ async function copySelection(ids) {
 function uniqueOutputNames(photos) {
   const nameCounts = {};
   for (const photo of photos) nameCounts[photo.name] = (nameCounts[photo.name] ?? 0) + 1;
-  return (photo) => (nameCounts[photo.name] > 1 ? photo.relPath.replaceAll('/', '_').replace(/ \((\d+)\)$/, '_$1') : photo.name);
+  // 이름이 겹치면 폴더 경로를 이름에 붙이고('day1_IMG_0001.jpg'), 사진 여러 장으로 고른 같은 이름은 번호를 확장자 앞에 붙인다('image_2.jpg')
+  return (photo) => {
+    if (nameCounts[photo.name] <= 1) return photo.name;
+    const copyNumber = photo.relPath.match(/ \((\d+)\)$/)?.[1];
+    const flat = photo.relPath.replace(/ \((\d+)\)$/, '').replaceAll('/', '_');
+    if (!copyNumber) return flat;
+    const dot = flat.lastIndexOf('.');
+    return dot > 0 ? `${flat.slice(0, dot)}_${copyNumber}${flat.slice(dot)}` : `${flat}_${copyNumber}`;
+  };
 }
 
 async function downloadSelection(ids) {
