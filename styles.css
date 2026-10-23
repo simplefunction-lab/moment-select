@@ -242,6 +242,11 @@
   #cast { width: min(420px, 92vw); max-height: 80dvh; overflow: auto; border: 1px solid var(--rule); border-radius: var(--radius-m); padding: 18px; background: var(--surface); color: var(--ink); box-shadow: 0 12px 32px rgba(30, 37, 35, .18); }
   #cast::backdrop { background: transparent; }
   #cast .source { margin-top: 10px; }
+  /* 팝오버를 지원하지 않는 브라우저: 기본 팝오버처럼 화면 가운데 띄우고, app.js가 붙이는 popover-open 클래스로만 보인다 */
+  @supports not selector(:popover-open) {
+    [popover] { position: fixed; inset: 0; margin: auto; height: fit-content; max-height: 85vh; max-height: 85dvh; overflow: auto; z-index: 40; }
+    [popover]:not(.popover-open) { display: none; }
+  }
   .cast-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
   .cast-face { display: grid; gap: 4px; justify-items: center; padding: 6px 4px; border: 1px solid transparent; border-radius: var(--radius-m); background: transparent; color: var(--ink-2); font: inherit; font-size: 12px; cursor: pointer; }
   .cast-face img, .cast-face .cast-blank { width: 100%; aspect-ratio: 1; border-radius: 50%; object-fit: cover; background: var(--sunken); outline: 2px solid transparent; outline-offset: 2px; }
@@ -325,6 +330,14 @@
     .controls .label-short { display: inline; }
     .export { padding: 24px 16px 60px; }
     .contact { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); }
+  }
+  /* 320px 같은 아주 좁은 화면: 버튼 다섯 개가 한 줄에 들어가게 아이콘 버튼과 간격을 줄이고, 결정 버튼의 아이콘은 뺀다.
+     min-width: 0이 없으면 글자 폭만큼 버티다가 줄 양끝이 화면 밖으로 밀려난다 */
+  @media (max-width: 360px) {
+    .controls { padding-left: 8px; padding-right: 8px; gap: 6px; }
+    .controls .decide { min-width: 0; padding: 0 6px; font-size: 14px; line-height: 1.15; white-space: normal; }
+    .controls .decide > i { display: none; }
+    .controls .icon-only { width: 40px; }
   }
   /* 손가락으로 쓰는 기기에서는 키보드 안내를 숨긴다 */
   @media (pointer: coarse) {

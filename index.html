@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ko">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -7,7 +7,7 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="theme-color" content="#F8F9F7">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>모먼트 셀렉</title>
+<title>Moment Select</title>
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="icon" href="./icons/icon-192.png">
 <link rel="apple-touch-icon" href="./icons/icon-192.png">
@@ -16,22 +16,22 @@
 </head>
 <body>
 <header class="topbar">
-  <div class="brand" data-i18n="brand">모먼트 셀렉</div>
-  <nav class="tabs" id="tabs" aria-label="단계" data-i18n-aria="stepsAria">
-    <button data-view="setup"><span data-i18n="tabSetup">시작</span></button>
-    <button data-view="first" disabled><span data-i18n="tabFirst">1차 셀렉</span><span class="num" id="tab-first"></span></button>
-    <button data-view="distill" disabled><span data-i18n="tabDistill">줄이기</span><span class="num" id="tab-keep"></span></button>
-    <button data-view="rescue" disabled><span data-i18n="tabRescue">다시 보기</span><span class="num" id="tab-drop"></span></button>
-    <button data-view="export" disabled><span data-i18n="tabExport">내보내기</span></button>
+  <div class="brand" data-i18n="brand">Moment Select</div>
+  <nav class="tabs" id="tabs" aria-label="Steps" data-i18n-aria="stepsAria">
+    <button data-view="setup"><span data-i18n="tabSetup">Start</span></button>
+    <button data-view="first" disabled><span data-i18n="tabFirst">First pass</span><span class="num" id="tab-first"></span></button>
+    <button data-view="distill" disabled><span data-i18n="tabDistill">Narrow down</span><span class="num" id="tab-keep"></span></button>
+    <button data-view="rescue" disabled><span data-i18n="tabRescue">Second look</span><span class="num" id="tab-drop"></span></button>
+    <button data-view="export" disabled><span data-i18n="tabExport">Export</span></button>
   </nav>
   <span class="spacer"></span>
-  <select id="language-select" aria-label="언어" data-i18n-aria="languageAria">
+  <select id="language-select" aria-label="Language" data-i18n-aria="languageAria">
     <option value="ko">한국어</option>
     <option value="en">English</option>
   </select>
-  <select id="reviewer-select" aria-label="고르는 사람" data-i18n-aria="reviewerAria"></select>
+  <select id="reviewer-select" aria-label="Who is picking" data-i18n-aria="reviewerAria"></select>
   <div class="goal" id="goal">
-    <div class="goal-line"><span><span data-i18n="goalKept">남긴 사진</span> <b class="num" id="goal-count">0</b> / <span class="num" id="goal-target">0</span><span data-i18n="goalUnit">장</span></span><span class="goal-note num" id="goal-note"></span></div>
+    <div class="goal-line"><span><span data-i18n="goalKept">Kept</span> <b class="num" id="goal-count">0</b> / <span class="num" id="goal-target">0</span><span data-i18n="goalUnit"></span></span><span class="goal-note num" id="goal-note"></span></div>
     <div class="goal-meter"><span id="goal-meter"></span></div>
   </div>
 </header>
@@ -42,67 +42,67 @@
   <!-- 시작 -->
   <section class="view" id="view-setup">
     <div class="setup">
-      <h1 data-i18n="setupTitle">남길 사진 고르기</h1>
-      <p data-i18n="setupIntro">사진을 고르면 이 기기 안에서 분석하고, 한 장씩 넘기며 남길 사진을 고를 수 있어요. 사진은 어디에도 올라가지 않고, 이 앱은 외부 서버와 통신하지 않아요.</p>
-      <p class="hint" id="drive-note" data-i18n="driveNote">구글 드라이브 사진은 컴퓨터에 Google Drive 데스크톱을 설치하면 폴더로 보여요. Windows는 탐색기의 Google Drive 드라이브, Mac은 Finder 사이드바의 Google Drive 아래 사진 폴더를 고르세요. 처음 분석할 때 사진을 내려받느라 느릴 수 있어서, 사진 폴더를 미리 오프라인 사용으로 설정해 두면 빨라요.</p>
+      <h1 data-i18n="setupTitle">Pick the photos to keep</h1>
+      <p data-i18n="setupIntro">Choose your photos and they are analyzed right on this device, then you swipe through them one by one to decide what to keep. Nothing is uploaded, and the app never talks to an outside server.</p>
+      <p class="hint" id="drive-note" data-i18n="driveNote">Photos in Google Drive show up as a folder once Google Drive for desktop is installed. On Windows, pick your photo folder under the Google Drive drive in File Explorer. On Mac, find it under Google Drive in the Finder sidebar. The first analysis can be slow while photos download, so make the folder available offline first.</p>
 
       <div class="resume hidden" id="resume">
         <i class="ph ph-clock-counter-clockwise"></i>
         <span id="resume-name" class="spacer"></span>
-        <button class="button" id="resume-button" data-i18n="resumeButton">이어서 고르기</button>
+        <button class="button" id="resume-button" data-i18n="resumeButton">Continue</button>
       </div>
 
       <div class="field">
-        <span class="label" data-i18n="fieldPreset">사진 종류</span>
+        <span class="label" data-i18n="fieldPreset">Photo type</span>
         <div class="control">
-          <div class="segmented" id="preset-options" role="radiogroup" aria-label="사진 종류" data-i18n-aria="presetAria"></div>
+          <div class="segmented" id="preset-options" role="radiogroup" aria-label="Photo type" data-i18n-aria="presetAria"></div>
           <p class="hint" id="preset-hint"></p>
         </div>
       </div>
       <div class="field">
-        <label for="target-input" data-i18n="fieldTarget">남길 장수</label>
+        <label for="target-input" data-i18n="fieldTarget">Photos to keep</label>
         <div class="control">
-          <div class="inline"><input type="number" id="target-input" min="1" value="30"><span class="hint" data-i18n="targetHint">장. 고르는 중에도 바꿀 수 있어요.</span></div>
+          <div class="inline"><input type="number" id="target-input" min="1" value="30"><span class="hint" data-i18n="targetHint">You can change this at any time.</span></div>
         </div>
       </div>
       <div class="field">
-        <span class="label" data-i18n="fieldGrouping">나눠 보기</span>
+        <span class="label" data-i18n="fieldGrouping">Group by</span>
         <div class="control">
-          <label class="check"><input type="checkbox" id="category-input" checked><span><span data-i18n="categoryCheck">인원수로 나눠 보기</span><br><span class="hint" data-i18n="categoryHint">혼자, 둘, 소그룹, 단체로 걸러 볼 수 있어요. 끄면 전체를 한 줄로 봅니다.</span></span></label>
-          <div class="inline" id="crowd-row"><span class="hint" data-i18n="crowdLabel">단체로 볼 인원</span><input type="number" id="crowd-input" min="3" value="5"><span class="hint" data-i18n="crowdUnit">명 이상</span></div>
+          <label class="check"><input type="checkbox" id="category-input" checked><span><span data-i18n="categoryCheck">Group by number of people</span><br><span class="hint" data-i18n="categoryHint">Filter by solo, two people, small group, and crowd. Turn this off to see everything in one line.</span></span></label>
+          <div class="inline" id="crowd-row"><span class="hint" data-i18n="crowdLabel">Count as a crowd from</span><input type="number" id="crowd-input" min="3" value="5"><span class="hint" data-i18n="crowdUnit">people</span></div>
         </div>
       </div>
       <div class="field">
-        <span class="label" data-i18n="fieldScore">점수 순서</span>
+        <span class="label" data-i18n="fieldScore">Order</span>
         <div class="control">
-          <label class="check"><input type="checkbox" id="score-input" checked><span><span data-i18n="scoreCheck">잘 나온 사진부터 보기</span><br><span class="hint" data-i18n="scoreHint">얼굴 선명도, 노출, 표정을 보고 순서를 정해요. 고르는 동안 내 결정을 배워서 순서를 다시 맞춥니다.</span></span></label>
+          <label class="check"><input type="checkbox" id="score-input" checked><span><span data-i18n="scoreCheck">Show the best shots first</span><br><span class="hint" data-i18n="scoreHint">Orders photos by face sharpness, exposure and expression, then learns from your choices and reorders as you go.</span></span></label>
         </div>
       </div>
       <div class="field">
-        <span class="label" data-i18n="fieldEyes">눈 감은 사진</span>
+        <span class="label" data-i18n="fieldEyes">Closed eyes</span>
         <div class="control">
-          <label class="check"><input type="checkbox" id="eyes-input" checked><span><span data-i18n="eyesCheck">눈 감은 사진은 점수 깎기</span><br><span class="hint" data-i18n="eyesHint">눈을 감아도 괜찮거나, 웨딩 촬영처럼 작가가 눈을 합성해 준다면 체크를 해제하세요.</span></span></label>
+          <label class="check"><input type="checkbox" id="eyes-input" checked><span><span data-i18n="eyesCheck">Lower the score of closed-eye shots</span><br><span class="hint" data-i18n="eyesHint">Uncheck this if closed eyes are fine, or if your photographer will retouch them, as wedding studios often do.</span></span></label>
         </div>
       </div>
       <div class="field">
-        <span class="label" data-i18n="fieldPeople">고르는 사람</span>
+        <span class="label" data-i18n="fieldPeople">Who is picking</span>
         <div class="control">
-          <div class="inline"><input type="text" id="name-a" value="나" style="width:120px" aria-label="첫 번째 사람" data-i18n-aria="personAAria"><input type="text" id="name-b" value="파트너" style="width:120px" aria-label="두 번째 사람" data-i18n-aria="personBAria"></div>
-          <p class="hint" data-i18n="peopleHint">둘이 따로 고르고 나중에 합칠 수 있어요. 혼자 고르면 그대로 두면 됩니다.</p>
+          <div class="inline"><input type="text" id="name-a" value="Me" style="width:120px" aria-label="First person" data-i18n-aria="personAAria"><input type="text" id="name-b" value="Partner" style="width:120px" aria-label="Second person" data-i18n-aria="personBAria"></div>
+          <p class="hint" data-i18n="peopleHint">Two people can pick separately and merge later. If you are picking alone, leave this as is.</p>
         </div>
       </div>
       <div class="field hidden" id="share-field">
-        <span class="label" data-i18n="fieldShare">통계 보내기</span>
+        <span class="label" data-i18n="fieldShare">Share stats</span>
         <div class="control">
-          <label class="check"><input type="checkbox" id="share-input"><span><span data-i18n="shareCheck">점수 기준 개선에 익명 숫자 보내기</span><br><span class="hint" data-i18n="shareHint">사진, 파일 이름, 얼굴 정보는 보내지 않아요. 사진마다 점수 항목 값(0에서 1 사이 숫자)과 남김 여부, 사진 종류만 보냅니다.</span></span></label>
+          <label class="check"><input type="checkbox" id="share-input"><span><span data-i18n="shareCheck">Send anonymous numbers to improve scoring</span><br><span class="hint" data-i18n="shareHint">No photos, file names or face data are sent. Only the scoring values (numbers between 0 and 1) per photo, whether you kept it, and the photo type.</span></span></label>
         </div>
       </div>
 
       <div class="start-row">
-        <button class="button primary" id="pick-folder"><i class="ph ph-folder-open"></i><span data-i18n="pickFolder">사진 폴더 선택</span></button>
-        <button class="button" id="pick-photos"><i class="ph ph-images"></i><span data-i18n="pickPhotos">사진 여러 장 선택</span></button>
+        <button class="button primary" id="pick-folder"><i class="ph ph-folder-open"></i><span data-i18n="pickFolder">Choose photo folder</span></button>
+        <button class="button" id="pick-photos"><i class="ph ph-images"></i><span data-i18n="pickPhotos">Choose photos</span></button>
       </div>
-      <p class="hint start-note" id="pick-note">폴더를 고르면 하위 폴더까지 JPG, PNG, WEBP를 읽어요. RAW는 건너뜁니다.</p>
+      <p class="hint start-note" id="pick-note">Reads JPG, PNG and WEBP files, including subfolders. RAW files are skipped.</p>
       <input type="file" id="fallback-input" webkitdirectory multiple hidden>
       <input type="file" id="photos-input" multiple accept="image/*" hidden>
     </div>
@@ -112,10 +112,10 @@
   <section class="view hidden" id="view-analyze">
     <div class="analyze">
       <div class="analyze-head">
-        <h1 id="analyze-title" data-i18n="analyzeTitle">사진 분석 중</h1>
+        <h1 id="analyze-title" data-i18n="analyzeTitle">Analyzing photos</h1>
         <span class="hint num" id="analyze-text"></span>
         <span class="spacer"></span>
-        <button class="button quiet" id="skip-faces" data-i18n="skipFaces">얼굴 분석 끄고 빨리 진행</button>
+        <button class="button quiet" id="skip-faces" data-i18n="skipFaces">Skip face analysis to go faster</button>
       </div>
       <div class="analyze-meter"><span id="analyze-meter"></span></div>
       <p class="hint analyze-note hidden" id="analyze-note"></p>
@@ -130,13 +130,13 @@
         <div class="filters" id="filters"></div>
         <span class="notice" id="notice"></span>
         <span class="spacer"></span>
-        <label class="check hidden" id="compare-wrap"><input type="checkbox" id="compare-input"><span data-i18n="compareToggle">두 장 나란히</span></label>
-        <button class="button quiet hidden" id="cast-button" popovertarget="cast" aria-label="주인공" data-i18n-aria="castButton"><i class="ph ph-user-focus"></i><span class="label" data-i18n="castButton">주인공</span></button>
-        <button class="button quiet" id="criteria-button" popovertarget="criteria" aria-label="점수 기준" data-i18n-aria="criteriaButton"><i class="ph ph-sliders-horizontal"></i><span class="label" data-i18n="criteriaButton">점수 기준</span></button>
+        <label class="check hidden" id="compare-wrap"><input type="checkbox" id="compare-input"><span data-i18n="compareToggle">Side by side</span></label>
+        <button class="button quiet hidden" id="cast-button" popovertarget="cast" aria-label="Main people" data-i18n-aria="castButton"><i class="ph ph-user-focus"></i><span class="label" data-i18n="castButton">Main people</span></button>
+        <button class="button quiet" id="criteria-button" popovertarget="criteria" aria-label="Scoring" data-i18n-aria="criteriaButton"><i class="ph ph-sliders-horizontal"></i><span class="label" data-i18n="criteriaButton">Scoring</span></button>
       </div>
       <div class="stage" id="stage"></div>
       <div class="controls" id="controls"></div>
-      <div class="filmstrip" id="filmstrip" aria-label="다음에 볼 사진" data-i18n-aria="filmstripAria"></div>
+      <div class="filmstrip" id="filmstrip" aria-label="Up next" data-i18n-aria="filmstripAria"></div>
     </div>
   </section>
 
@@ -148,20 +148,20 @@
 
 <div id="criteria" popover></div>
 <div id="cast" popover></div>
-<dialog id="viewer"><button class="button close" id="viewer-close"><i class="ph ph-x"></i><span data-i18n="viewerClose">닫기</span></button></dialog>
+<dialog id="viewer"><button class="button close" id="viewer-close"><i class="ph ph-x"></i><span data-i18n="viewerClose">Close</span></button></dialog>
 <div class="toast hidden" id="toast" role="status"></div>
 
 <!-- 그리스 펜슬 표시 원본 (복제해서 쓴다) -->
 <template id="mark-template">
   <div class="mark keep" aria-hidden="true">
     <svg viewBox="0 0 100 100" preserveAspectRatio="none"><path pathLength="1" d="M22 13 C 44 3, 82 4, 94 30 C 102 56, 88 90, 54 96 C 22 100, 3 80, 4 50 C 5 26, 22 10, 46 7 C 54 6, 60 7, 64 9"/></svg>
-    <span class="word" data-i18n="markKeep">남김</span>
+    <span class="word" data-i18n="markKeep">keep</span>
   </div>
 </template>
 <template id="cross-template">
   <div class="mark drop" aria-hidden="true">
     <svg viewBox="0 0 100 100" preserveAspectRatio="none"><path pathLength="1" d="M10 12 C 34 36, 62 64, 91 90"/><path pathLength="1" d="M90 10 C 64 38, 36 62, 9 88"/></svg>
-    <span class="word" data-i18n="markDrop">뺌</span>
+    <span class="word" data-i18n="markDrop">drop</span>
   </div>
 </template>
 

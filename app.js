@@ -86,7 +86,8 @@ const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시�
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
 const CACHE_VERSION = 'v5';             // 분석 방식이 바뀌면 올린다 (v5: 같은 사람 알아보기, 미적 점수)
-const APP_VERSION = 'v11';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
+const APP_VERSION = 'v12';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
+const ETA_WARMUP_PHOTOS = 3;             // 이만큼 분석하기 전에는 남은 시간을 보여주지 않는다 (첫 장은 모델 준비로 느리다)
 const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
 const DARK_RETRY_LUMINANCE = 100;        // 평균 밝기가 이보다 어두운데 얼굴을 못 찾으면 밝게 보정해서 한 번 더 찾는다
 const DARK_RETRY_THRESHOLD = 0.35;       // 다시 찾을 때의 검출 기준 (기본 0.45보다 조금 너그럽게)
@@ -132,7 +133,8 @@ function modelFromWeights(weights, source, penalizeClosedEyes) {
 
 // ---------- 전체 상태 ----------
 const state = {
-  folderName: '',
+  folderName: '',                // 화면과 파일 목록에 보이는 폴더 이름
+  projectKey: '',                // 결정을 저장하는 이름 (언어와 상관없다)
   photos: [],                    // 사진 목록 (분석 결과 포함)
   photoById: new Map(),          // 사진 id(폴더 안 상대 경로)로 찾기
   groups: new Map(),             // 묶음 id에서 사진 id 배열로
@@ -222,8 +224,8 @@ async function dbSet(key, value) {
 let saveTimer = null;
 function saveProjectNow() {
   clearTimeout(saveTimer);
-  if (!state.folderName) return Promise.resolve(false);
-  return dbSet(`project:${state.folderName}`, {
+  if (!state.projectKey) return Promise.resolve(false);
+  return dbSet(`project:${state.projectKey}`, {
     settings: state.settings, reviewers: state.reviewers, models: state.models, rounds: state.rounds,
     dividerSeen: state.dividerSeen, sentSampleCount: state.sentSampleCount, expandedGroups: [...state.expandedGroups],
     castKeys: state.castKeys,
@@ -297,10 +299,15 @@ async function loadPriorModel() {
   }
 }
 
-async function startWithEntries(folderName, imageEntries) {
+// source: 다음에 열 때 이어서 고를 수 있게 기억할 정보 {kind: handle | folder | photos, key, count?, first?}
+// key는 저장 이름이라 언어와 상관없어야 한다 (화면에 보이는 folderName은 언어마다 다를 수 있다)
+async function startWithEntries(folderName, imageEntries, source = { kind: 'handle', key: folderName }) {
   applySettingsFromForm();
   state.folderName = folderName;
-  const savedProject = await dbGet(`project:${folderName}`);
+  state.projectKey = source.key;
+  // 예전 판은 사진 고르기를 화면 문구(folderName)로 저장했다
+  const savedProject = await dbGet(`project:${source.key}`) ?? (source.key !== folderName ? await dbGet(`project:${folderName}`) : undefined);
+  dbSet('lastProject', source);
   state.castKeys = null;
   if (savedProject && savedProject.settings?.preset === state.settings.preset) {
     // 같은 폴더, 같은 사진 종류로 다시 열면 결정과 학습 결과를 이어서 쓴다
@@ -316,6 +323,9 @@ async function startWithEntries(folderName, imageEntries) {
     state.castKeys = savedProject.castKeys ?? null;
   }
   state.priorModel = await loadPriorModel();
+  // 같은 화면에서 사진을 새로 고르면 지난 사진의 썸네일과 원본 주소를 풀어 메모리를 돌려준다
+  for (const photo of state.photos) if (photo.thumbUrl) URL.revokeObjectURL(photo.thumbUrl);
+  keepOnlyUrls([]);
   state.photos = imageEntries.map((entry) => ({
     id: entry.relPath, relPath: entry.relPath, name: entry.name,
     handle: entry.handle ?? null, file: entry.file ?? null,
@@ -353,7 +363,8 @@ $('#fallback-input').onchange = async (event) => {
   const imageEntries = files
     .filter((file) => SUPPORTED_IMAGE.test(file.name) && !file.webkitRelativePath.split('/').some(isExportFolder))
     .map((file) => ({ relPath: file.webkitRelativePath.split('/').slice(1).join('/') || file.name, name: file.name, file }));
-  await startWithEntries(files[0]?.webkitRelativePath.split('/')[0] || t('fallbackFolderName'), imageEntries);
+  const folderName = files[0]?.webkitRelativePath.split('/')[0] || t('fallbackFolderName');
+  await startWithEntries(folderName, imageEntries, { kind: 'folder', key: folderName });
 };
 
 // 휴대폰과 폴더 선택이 안 되는 브라우저: 사진 보관함이나 갤러리에서 여러 장 고르기
@@ -371,7 +382,8 @@ $('#photos-input').onchange = async (event) => {
     nameCounts.set(file.name, count);
     return { relPath: count > 1 ? `${file.name} (${count})` : file.name, name: file.name, file };
   });
-  await startWithEntries(t('pickedSourceName', { count: imageFiles.length, first: imageFiles[0].name }), imageEntries);
+  const count = imageFiles.length, first = imageFiles[0].name;
+  await startWithEntries(t('pickedSourceName', { count, first }), imageEntries, { kind: 'photos', key: `picked:${count}:${first}`, count, first });
 };
 
 // 환경에 맞게 시작 버튼을 배치한다
@@ -391,30 +403,48 @@ let pickNoteKey = 'pickNoteDefault'; // 시작 화면 안내 문구 (환경에 �
   }
 })();
 
-let resumeFolderName = ''; // 이어하기 폴더 이름 (언어를 바꿀 때 문구를 다시 쓰려고 기억)
-(async function setupResume() {
-  const lastHandle = await dbGet('lastHandle');
-  if (!lastHandle?.queryPermission) return;
-  const savedProject = await dbGet(`project:${lastHandle.name}`);
+let resumeText = null; // 이어하기 안내 문구를 만드는 함수 (언어를 바꿀 때 다시 쓰려고 기억)
+// 지난번 설정을 시작 화면에 되살린다. 사진 종류가 같아야 결정을 이어 쓰므로, 같은 사진을 다시 고르면 그대로 이어진다
+function restoreSettingsForm(savedProject) {
+  Object.assign(state.settings, savedProject.settings);
+  $('#target-input').value = state.settings.target;
+  $('#category-input').checked = state.settings.useCategories;
+  $('#crowd-row').classList.toggle('hidden', !state.settings.useCategories);
+  $('#crowd-input').value = state.settings.crowdMin;
+  $('#score-input').checked = state.settings.useScore;
+  $('#eyes-input').checked = state.settings.penalizeClosedEyes !== false;
+  $('#name-a').value = savedProject.reviewers?.a?.name ?? t('defaultNameA');
+  $('#name-b').value = savedProject.reviewers?.b?.name ?? t('defaultNameB');
+  renderPresetOptions();
+  renderTopbar(); // 위쪽 '남긴 사진 0 / 목표'도 되살린 목표로
+}
+function showResume(makeText, buttonKey, onClick) {
+  resumeText = makeText;
+  $('#resume-name').textContent = makeText();
+  $('#resume-button').dataset.i18n = buttonKey;
+  $('#resume-button').textContent = t(buttonKey);
+  $('#resume-button').onclick = onClick;
   $('#resume').classList.remove('hidden');
-  resumeFolderName = lastHandle.name;
-  $('#resume-name').textContent = t('resumeName', lastHandle.name);
-  if (savedProject?.settings) {
-    Object.assign(state.settings, savedProject.settings);
-    $('#target-input').value = state.settings.target;
-    $('#category-input').checked = state.settings.useCategories;
-    $('#crowd-input').value = state.settings.crowdMin;
-    $('#score-input').checked = state.settings.useScore;
-    $('#eyes-input').checked = state.settings.penalizeClosedEyes !== false;
-    $('#name-a').value = savedProject.reviewers?.a?.name ?? t('defaultNameA');
-    $('#name-b').value = savedProject.reviewers?.b?.name ?? t('defaultNameB');
-    renderPresetOptions();
+}
+(async function setupResume() {
+  const [lastHandle, lastProject] = await Promise.all([dbGet('lastHandle'), dbGet('lastProject')]);
+  const handleUsable = Boolean(lastHandle?.queryPermission);
+  const key = lastProject?.key ?? (handleUsable ? lastHandle.name : null);
+  if (!key) return;
+  const savedProject = await dbGet(`project:${key}`);
+  if (savedProject?.settings) restoreSettingsForm(savedProject);
+  if (handleUsable && (!lastProject || (lastProject.kind === 'handle' && lastProject.key === lastHandle.name))) {
+    showResume(() => t('resumeName', lastHandle.name), 'resumeButton', async () => {
+      if (await lastHandle.requestPermission({ mode: 'read' }) !== 'granted') { showToast(t('permissionNeeded')); return; }
+      state.skippedFileCount = 0;
+      await startWithEntries(lastHandle.name, await collectImageEntries(lastHandle));
+    });
+  } else if (savedProject && lastProject?.kind === 'photos') {
+    // 사진 보관함에서 고른 사진은 다시 열 권한이 없어서, 같은 사진을 다시 고르도록 안내한다
+    showResume(() => t('resumePicked', { count: lastProject.count, first: lastProject.first }), 'resumeRepick', () => $('#photos-input').click());
+  } else if (savedProject && lastProject?.kind === 'folder') {
+    showResume(() => t('resumeName', lastProject.key), 'resumeRepick', () => $('#fallback-input').click());
   }
-  $('#resume-button').onclick = async () => {
-    if (await lastHandle.requestPermission({ mode: 'read' }) !== 'granted') { showToast(t('permissionNeeded')); return; }
-    state.skippedFileCount = 0;
-    await startWithEntries(lastHandle.name, await collectImageEntries(lastHandle));
-  };
 })();
 
 /* =====================================================================
@@ -553,6 +583,7 @@ async function loadLibraries() {
   // 눈 감음 정밀 모델: 눈 감은 사진 감점을 켰을 때만. 실패하면 face-api 랜드마크로 눈 모양을 본다
   if (state.settings.penalizeClosedEyes) {
     try {
+      quietMediaPipeInfoLogs();
       const { FaceLandmarker } = await import(MEDIAPIPE_URL);
       eyeLandmarker = await FaceLandmarker.createFromOptions({
         wasmLoaderPath: new URL(MEDIAPIPE_WASM_LOADER_URL, location.href).href,
@@ -570,6 +601,18 @@ async function loadLibraries() {
       eyeEngine.status = 'failed';
     }
   }
+}
+// MediaPipe(wasm)는 "INFO: Created TensorFlow Lite XNNPACK delegate" 같은 정보 로그도 console.error로 찍는다.
+// 에러처럼 보이지 않게 "INFO:"로 시작하는 줄만 걸러 낸다 (경고와 진짜 에러는 그대로)
+let mediaPipeLogsQuieted = false;
+function quietMediaPipeInfoLogs() {
+  if (mediaPipeLogsQuieted) return;
+  mediaPipeLogsQuieted = true;
+  const consoleError = console.error.bind(console);
+  console.error = (...args) => {
+    if (typeof args[0] === 'string' && args[0].startsWith('INFO:')) return;
+    consoleError(...args);
+  };
 }
 // 미적 점수를 지금 낼 수 있는지: 그래픽 가속(WebGL)이 없으면 장당 1~2초라 건너뛴다
 const canScoreAesthetic = () => Boolean(aestheticModel && faceApi && faceApi.tf.getBackend() === 'webgl');
@@ -957,9 +1000,9 @@ async function analyzeAll() {
   $('#analyze-sheet').innerHTML = '';
   await loadLibraries();
   await crossCheckFaceBackends();
-  const startedAt = performance.now();
   const totalCount = state.photos.length;
   let finishedCount = 0;
+  let rateStartedAt = 0; // 남은 시간 계산 기준 (첫 장은 모델 준비 시간이 섞여 있어서 둘째 장부터 잰다)
   for (const photo of state.photos) {
     try {
       await analyzeOne(photo);
@@ -968,7 +1011,9 @@ async function analyzeAll() {
       photo.analysis = { focusSharpness: 0, noise: 0, light: { mean: 128, brightClip: 0, darkClip: 0 }, hash: [0, 0], faces: null, failed: true };
     }
     finishedCount++;
-    const remainingSeconds = Math.round(((performance.now() - startedAt) / 1000 / finishedCount) * (totalCount - finishedCount));
+    if (finishedCount === 1) rateStartedAt = performance.now();
+    const remainingSeconds = finishedCount <= ETA_WARMUP_PHOTOS ? null
+      : Math.round(((performance.now() - rateStartedAt) / 1000 / (finishedCount - 1)) * (totalCount - finishedCount));
     $('#analyze-meter').style.width = `${(finishedCount / totalCount) * 100}%`;
     $('#analyze-text').textContent = t('analyzeProgress', { done: finishedCount, total: totalCount, seconds: remainingSeconds, faceOff: !faceApi });
     if (photo.thumbUrl) $('#analyze-sheet').insertAdjacentHTML('beforeend', `<img src="${photo.thumbUrl}" alt="">`);
@@ -1718,7 +1763,9 @@ function renderPickView() {
     const queue = distillQueue();
     setNotice(keepCount > target
       ? t('noticeDistillOver', keepCount - target)
-      : t('noticeDistillOk', target), keepCount > target);
+      : keepCount < target
+        ? t('noticeDistillUnder', { target, count: target - keepCount })
+        : t('noticeDistillOk', target), keepCount > target);
     renderFilmstrip(naturalQueue(distillQueue).map((photo) => ({ ids: [photo.id], photo, count: 1 })), queue[0] ? [queue[0].id] : []);
     if (state.compareMode) {
       const pair = comparePair();
@@ -2104,6 +2151,33 @@ function renderCompare(stage, [leftPhoto, rightPhoto]) {
   currentKeys = { left: () => keepOne(0), right: () => keepOne(1), down: keepBoth };
 }
 
+// ---------- 팝오버를 지원하지 않는 브라우저 (iOS 16 이하 Safari, Firefox 124 이하) ----------
+// 점수 기준과 주인공 패널에 쓰는 만큼만 흉내 낸다: 버튼으로 열고 닫기, 바깥을 누르거나 Esc로 닫기, toggle 이벤트.
+// 열린 상태는 popover-open 클래스로 나타내고, 숨기기와 위치는 styles.css의 @supports 규칙이 맡는다
+if (!('popover' in HTMLElement.prototype)) {
+  const setPanelOpen = (panel, open) => {
+    if (panel.classList.contains('popover-open') === open) return;
+    panel.classList.toggle('popover-open', open);
+    panel.dispatchEvent(Object.assign(new Event('toggle'), { newState: open ? 'open' : 'closed', oldState: open ? 'closed' : 'open' }));
+  };
+  for (const panel of document.querySelectorAll('[popover]')) {
+    panel.showPopover = () => setPanelOpen(panel, true);
+    panel.hidePopover = () => setPanelOpen(panel, false);
+    panel.togglePopover = () => setPanelOpen(panel, !panel.classList.contains('popover-open'));
+  }
+  document.addEventListener('click', (event) => {
+    const opener = event.target.closest('[popovertarget]');
+    const target = opener ? document.getElementById(opener.getAttribute('popovertarget')) : null;
+    for (const panel of document.querySelectorAll('[popover].popover-open')) {
+      if (panel !== target && !panel.contains(event.target)) panel.hidePopover();
+    }
+    target?.togglePopover();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') for (const panel of document.querySelectorAll('[popover].popover-open')) panel.hidePopover();
+  });
+}
+
 // ---------- 점수 기준 패널 ----------
 $('#criteria').addEventListener('toggle', (event) => {
   if (event.newState !== 'open') return;
@@ -2371,7 +2445,16 @@ function renderExportView() {
 
   if ($('#basis-options')) $('#basis-options').onchange = (event) => { exportBasis = event.target.value; render(); };
   $('#export-target').onchange = (event) => { state.settings.target = Math.max(1, parseInt(event.target.value, 10) || 1); saveProjectSoon(); render(); };
-  $('#export-list').onclick = async () => { await navigator.clipboard.writeText(selectionListText(ids)); showToast(t('listCopied')); };
+  $('#export-list').onclick = async () => {
+    // http로 연 주소나 권한이 막힌 브라우저는 클립보드를 쓸 수 없다. 그때는 목록 파일로 내려받는다
+    try {
+      await navigator.clipboard.writeText(selectionListText(ids));
+      showToast(t('listCopied'));
+    } catch {
+      downloadBlob(new Blob([selectionListText(ids)], { type: 'text/plain' }), t('listFileName'));
+      showToast(t('listCopyFailed'));
+    }
+  };
   if ($('#export-copy')) $('#export-copy').onclick = () => copySelection(ids);
   if ($('#export-download')) $('#export-download').onclick = () => downloadSelection(ids);
   if ($('#export-share')) $('#export-share').onclick = () => shareNextBatch(ids);
@@ -2498,7 +2581,7 @@ function applyLanguage() {
   applyStaticText();
   $('#language-select').value = getLanguage();
   $('#pick-note').textContent = t(pickNoteKey);
-  if (resumeFolderName) $('#resume-name').textContent = t('resumeName', resumeFolderName);
+  if (resumeText) $('#resume-name').textContent = resumeText();
   // 사람 이름이 아직 기본값이면 언어에 맞게 바꾼다 (직접 입력한 이름은 그대로)
   for (const [inputId, reviewerKey, defaultKey] of [['#name-a', 'a', 'defaultNameA'], ['#name-b', 'b', 'defaultNameB']]) {
     if (isDefaultName($(inputId).value.trim())) $(inputId).value = t(defaultKey);
