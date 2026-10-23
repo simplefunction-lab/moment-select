@@ -96,7 +96,7 @@ const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시�
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
 const CACHE_VERSION = 'v5';             // 분석 방식이 바뀌면 올린다 (v5: 같은 사람 알아보기, 미적 점수)
-const APP_VERSION = 'v18';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
+const APP_VERSION = 'v19';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
 const ANALYZE_SHEET_MAX = 120;           // 분석 화면에 동시에 보여줄 썸네일 수 (1,000장 넘게 불러와도 화면 요소가 계속 늘지 않게)
 const ETA_WARMUP_PHOTOS = 3;             // 이만큼 분석하기 전에는 남은 시간을 보여주지 않는다 (첫 장은 모델 준비로 느리다)
 const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
@@ -596,6 +596,9 @@ async function loadLibraries() {
     // WebGL(그래픽 가속)을 먼저 쓰고, 안 되면 CPU로. wasm 백엔드는 쓰지 않는다
     // 진단용: ?faceF16=1 이면 휴대폰 GPU처럼 16비트 정밀도로 계산하게 해서 문제를 재현한다
     if (new URLSearchParams(location.search).get('faceF16') === '1') module.tf.env().set('WEBGL_FORCE_F16_TEXTURES', true);
+    // 다 쓴 GPU 텍스처를 모아 두지 않고 바로 지운다. 기본값(모아 두기)이면 Safari(WebKit)에서 메모리가 1GB 가까이 차서
+    // 아이폰에서 탭이 강제로 새로고침될 수 있다. 진단용: ?texturePool=1 이면 예전처럼 모아 둔다
+    if (new URLSearchParams(location.search).get('texturePool') !== '1') module.tf.env().set('WEBGL_DELETE_TEXTURE_THRESHOLD', 0);
     const webglReady = forcedFaceBackend === 'cpu' ? false : await module.tf.setBackend('webgl').catch(() => false);
     if (!webglReady) await module.tf.setBackend('cpu');
     await module.tf.ready();
@@ -1009,6 +1012,11 @@ async function analyzeOne(photo) {
 // 처음 몇 장을 WebGL과 CPU로 각각 돌려 보고, WebGL이 눈에 띄게 적게 찾으면 CPU로 계속한다.
 async function crossCheckFaceBackends() {
   if (!faceApi || faceEngine.backend !== 'webgl' || forcedFaceBackend === 'webgl') return;
+  // 이 비교는 32비트 실수 계산을 못 하는(16비트 정밀도) GPU에서 얼굴을 놓치는 문제 때문에 한다.
+  // 32비트를 지원하는 GPU(최근 아이폰, 데스크톱 등)는 건너뛴다. 비교에 쓰는 CPU 계산이
+  // Safari(WebKit)에서 메모리를 수백 MB 잡고 돌려주지 않아서, 아이폰에서 탭이 새로고침될 위험을 키운다.
+  // 진단용: ?faceCheck=1 이면 항상 비교한다
+  if (faceEngine.float32 !== false && new URLSearchParams(location.search).get('faceCheck') !== '1') return;
   $('#analyze-text').textContent = t('checkingBackend');
   const sampleCanvases = []; // 비교에 쓸 분석용 크기 사본
   for (const photo of state.photos.slice(0, CROSS_CHECK_SAMPLES)) {
