@@ -96,7 +96,7 @@ const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시�
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
 const CACHE_VERSION = 'v5';             // 분석 방식이 바뀌면 올린다 (v5: 같은 사람 알아보기, 미적 점수)
-const APP_VERSION = 'v23';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
+const APP_VERSION = 'v24';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
 const ANALYZE_SHEET_MAX = 120;           // 분석 화면에 동시에 보여줄 썸네일 수 (1,000장 넘게 불러와도 화면 요소가 계속 늘지 않게)
 const ETA_WARMUP_PHOTOS = 3;             // 이만큼 분석하기 전에는 남은 시간을 보여주지 않는다 (첫 장은 모델 준비로 느리다)
 const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
@@ -520,6 +520,8 @@ const faceEngine = {
   crossCheck: null,    // WebGL과 CPU 비교 결과 {samples, webglFaces, cpuFaces, switched}
   darkRetries: 0,      // 어두워서 밝게 보정해 다시 찾은 횟수
   darkRetryHits: 0,    // 그렇게 해서 얼굴을 찾은 횟수
+  wideRetries: 0,      // 얼굴을 못 찾아 더 크게(800) 다시 찾은 횟수
+  wideRetryHits: 0,    // 그렇게 해서 얼굴을 찾은 횟수
 };
 // 진단용: 주소 뒤에 ?faceBackend=cpu 를 붙이면 처음부터 CPU로 계산한다
 const forcedFaceBackend = new URLSearchParams(location.search).get('faceBackend');
@@ -867,11 +869,21 @@ function eyeAspectRatio(eyePoints) {
   return (distance(eyePoints[1], eyePoints[5]) + distance(eyePoints[2], eyePoints[4])) / (2 * distance(eyePoints[0], eyePoints[3]));
 }
 
-function detectFaces(canvas, scoreThreshold = 0.45) {
-  return faceApi
-    .detectAllFaces(canvas, new faceApi.TinyFaceDetectorOptions({ inputSize: 512, scoreThreshold }))
-    .withFaceLandmarks()
-    .withFaceExpressions();
+// 얼굴 찾기: 512로 줄여 찾고, 하나도 없으면 800으로 한 번 더 찾는다. 512만 쓰면 멀리서 찍은 사진의 얼굴(사진 높이의 7~9%)이
+// 사라진다. 모든 사진을 800으로도 찾으면 Safari에서 사진마다 0.3초쯤 더 걸려서, 얼굴을 못 찾은 사진에만 쓴다
+const FACE_INPUT_SIZE = 512;
+const FACE_WIDE_INPUT_SIZE = 800;
+const findFaces = (canvas, inputSize, scoreThreshold) => faceApi
+  .detectAllFaces(canvas, new faceApi.TinyFaceDetectorOptions({ inputSize, scoreThreshold }))
+  .withFaceLandmarks()
+  .withFaceExpressions();
+async function detectFaces(canvas, scoreThreshold = 0.45) {
+  const faces = await findFaces(canvas, FACE_INPUT_SIZE, scoreThreshold);
+  if (faces.length) return faces;
+  faceEngine.wideRetries++;
+  const wideFaces = await findFaces(canvas, FACE_WIDE_INPUT_SIZE, scoreThreshold);
+  if (wideFaces.length) faceEngine.wideRetryHits++;
+  return wideFaces;
 }
 
 // 어두운 사진을 감마 보정으로 밝혀 retryCanvas에 그린다 (평균 밝기를 120 근처로)
@@ -2616,6 +2628,7 @@ function diagnosticsText() {
   if (faceEngine.crossCheck) lines.push(t('diagCrossCheck', faceEngine.crossCheck));
   if (analyzedWithFaces.length) lines.push(t('diagFaces', { found: photosWithFaces, total: analyzedWithFaces.length }));
   if (faceEngine.darkRetries) lines.push(t('diagDark', { hits: faceEngine.darkRetryHits, tries: faceEngine.darkRetries }));
+  if (faceEngine.wideRetries) lines.push(t('diagWide', { hits: faceEngine.wideRetryHits, tries: faceEngine.wideRetries }));
   // 같은 사람 알아보기와 미적 점수
   if (analyzedWithFaces.length) {
     const judgedFaces = analyzedWithFaces.flatMap((photo) => photo.analysis.faces).filter((face) => face.eyesJudged);
