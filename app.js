@@ -96,7 +96,7 @@ const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시�
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
 const CACHE_VERSION = 'v5';             // 분석 방식이 바뀌면 올린다 (v5: 같은 사람 알아보기, 미적 점수)
-const APP_VERSION = 'v26';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
+const APP_VERSION = 'v27';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
 const ANALYZE_SHEET_MAX = 120;           // 분석 화면에 동시에 보여줄 썸네일 수 (1,000장 넘게 불러와도 화면 요소가 계속 늘지 않게)
 const ETA_WARMUP_PHOTOS = 3;             // 이만큼 분석하기 전에는 남은 시간을 보여주지 않는다 (첫 장은 모델 준비로 느리다)
 const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
@@ -3463,11 +3463,15 @@ function renderUpdateBar() {
   bar.classList.remove('hidden');
 }
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-  // 처음 방문해서 서비스 워커가 막 생긴 경우는 새 버전이 아니니 알리지 않는다
-  const hadController = Boolean(navigator.serviceWorker.controller);
+  // 처음 방문해서 서비스 워커가 막 생긴 경우는 새 버전이 아니니 알리지 않는다.
+  // '이번 교체 직전에' 컨트롤러가 있었는지로 판단한다. 화면을 열 때 한 번만 보면, 첫 방문에 연 탭은
+  // 그 뒤로 새 버전이 몇 번 나와도 새로고침도 알림도 없이 예전 판에 머문다 (iOS는 탭을 며칠씩 살려 둔다)
+  let previousController = navigator.serviceWorker.controller;
   navigator.serviceWorker.addEventListener('controllerchange', async () => {
     const newWorker = navigator.serviceWorker.controller;
-    if (!hadController || updateBarShown || !newWorker) return;
+    const wasControlled = Boolean(previousController);
+    previousController = newWorker;
+    if (!wasControlled || updateBarShown || !newWorker) return;
     // 이 화면이 이미 서버에서 받은 최신 코드면 새로고침할 필요가 없다
     if (await askWorkerVersion(newWorker) === APP_VERSION) return;
     if (!state.photos.length && state.view === 'setup') { location.reload(); return; }
