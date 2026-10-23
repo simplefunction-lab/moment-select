@@ -519,6 +519,24 @@
   .contact figcaption { font-size: 11.5px; }
   .contact .remove { width: 28px; height: 28px; margin: -6px -6px -6px 0; border-radius: 50%; display: grid; place-items: center; }
   .contact .remove:hover { background: rgba(200, 38, 28, .1); }
+  /* 폴더 정리 구역 */
+  .export .basis-row { margin-top: 16px; }
+  .organize-name { display: flex; flex-direction: column; gap: 4px; }
+  .organize-name input { width: min(280px, 100%); height: 44px; border-radius: 12px; font-weight: 600; }
+  .organize .row { align-items: flex-end; }
+  .organize-result { margin-top: 8px; font-size: 15px; font-weight: 600; max-width: 70ch; }
+  .organize-result.error { color: var(--marker); }
+  /* 묻고 답 받는 창 */
+  dialog.ask { width: min(440px, calc(100vw - 32px)); padding: 22px; border: 1px solid rgba(30, 37, 35, .1); border-radius: var(--radius-xl); background: var(--surface); color: var(--ink);
+    box-shadow: 0 30px 70px -20px rgba(30, 37, 35, .45); }
+  dialog.ask::backdrop { background: rgba(20, 23, 24, .45); }
+  dialog.ask h2 { font-size: 19px; letter-spacing: -0.02em; }
+  dialog.ask #ask-body { margin-top: 8px; font-size: 14px; line-height: 1.55; }
+  dialog.ask .ask-field { display: flex; flex-direction: column; gap: 6px; margin-top: 16px; font-weight: 600; font-size: 13px; }
+  dialog.ask .ask-field input { height: 44px; border-radius: 12px; font-size: 16px; font-weight: 600; }
+  dialog.ask .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; flex-wrap: wrap; }
+  dialog.ask .button { height: 44px; border-radius: 14px; padding: 0 16px; }
+  dialog.ask .button.primary { border: none; background: var(--keep-gradient); box-shadow: var(--keep-glow), inset 0 1px 0 rgba(255, 255, 255, .28); }
   .export-merge { margin-top: 32px; padding-top: 18px; border-top: 1px solid rgba(30, 37, 35, .1); }
   .export-merge summary { display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; }
   .export-merge summary::-webkit-details-marker { display: none; }

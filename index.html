@@ -164,6 +164,13 @@
 
 <div id="criteria" popover role="dialog" aria-label="Scoring" data-i18n-aria="criteriaButton"></div>
 <div id="cast" popover role="dialog" aria-label="Main people" data-i18n-aria="castTitle"></div>
+<!-- 묻고 답 받는 창 (폴더 정리 여부, 옮기기 확인). 내용은 app.js의 askDialog가 채운다 -->
+<dialog id="ask" class="ask"><form method="dialog">
+  <h2 id="ask-title"></h2>
+  <p class="hint" id="ask-body"></p>
+  <label class="ask-field hidden" id="ask-field"><span id="ask-label"></span><input type="text" id="ask-input" maxlength="100" autocomplete="off" spellcheck="false"></label>
+  <div class="row"><button class="button" value="cancel" id="ask-cancel"></button><button class="button primary" value="ok" id="ask-ok"></button></div>
+</form></dialog>
 <dialog id="viewer"><button class="button close" id="viewer-close"><i class="ph ph-x"></i><span data-i18n="viewerClose">Close</span></button></dialog>
 <div class="toast hidden" id="toast" role="status"></div>
 <!-- 목표 장수를 맞췄을 때 축하 표시 -->

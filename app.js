@@ -96,7 +96,7 @@ const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시�
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
 const CACHE_VERSION = 'v5';             // 분석 방식이 바뀌면 올린다 (v5: 같은 사람 알아보기, 미적 점수)
-const APP_VERSION = 'v16';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
+const APP_VERSION = 'v17';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
 const ANALYZE_SHEET_MAX = 120;           // 분석 화면에 동시에 보여줄 썸네일 수 (1,000장 넘게 불러와도 화면 요소가 계속 늘지 않게)
 const ETA_WARMUP_PHOTOS = 3;             // 이만큼 분석하기 전에는 남은 시간을 보여주지 않는다 (첫 장은 모델 준비로 느리다)
 const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
@@ -242,7 +242,7 @@ function saveProjectNow() {
   return dbSet(`project:${state.projectKey}`, {
     settings: state.settings, reviewers: state.reviewers, models: state.models, rounds: state.rounds,
     dividerSeen: state.dividerSeen, sentSampleCount: state.sentSampleCount, expandedGroups: [...state.expandedGroups],
-    castKeys: state.castKeys,
+    castKeys: state.castKeys, organize: state.organize,
   });
 }
 function saveProjectSoon() {
@@ -297,8 +297,12 @@ function applySettingsFromForm() {
 /* =====================================================================
    1. 폴더 읽기
    ===================================================================== */
+// 파일 이름에서 확장자를 뗀 부분 (RAW+JPG처럼 같은 장면의 짝 파일을 찾을 때 쓴다)
+const baseName = (fileName) => fileName.replace(/\.[^.]+$/, '').toLowerCase();
 async function collectImageEntries(directoryHandle, pathPrefix = '') {
-  const imageEntries = []; // {relPath, name, handle}
+  const imageEntries = []; // {relPath, name, handle, dir, companions}
+  const otherFiles = [];   // 이 폴더의 사진이 아닌 파일 (RAW, HEIC, XMP 등)
+  const ownImages = [];
   for await (const [entryName, entryHandle] of directoryHandle.entries()) {
     if (entryName.startsWith('.')) continue;
     const relPath = pathPrefix ? `${pathPrefix}/${entryName}` : entryName;
@@ -306,11 +310,15 @@ async function collectImageEntries(directoryHandle, pathPrefix = '') {
       if (isExportFolder(entryName)) continue; // 지난번에 내보낸 폴더는 다시 읽지 않음
       imageEntries.push(...await collectImageEntries(entryHandle, relPath));
     } else if (SUPPORTED_IMAGE.test(entryName)) {
-      imageEntries.push({ relPath, name: entryName, handle: entryHandle });
-    } else if (UNSUPPORTED_IMAGE.test(entryName)) {
-      state.skippedFileCount++;
+      ownImages.push({ relPath, name: entryName, handle: entryHandle, dir: directoryHandle, companions: [] });
+    } else {
+      if (UNSUPPORTED_IMAGE.test(entryName)) state.skippedFileCount++;
+      otherFiles.push(entryHandle);
     }
   }
+  // 폴더를 정리할 때 사진과 같이 옮길 짝 파일 (IMG_0001.JPG와 IMG_0001.CR3, IMG_0001.xmp)
+  for (const entry of ownImages) entry.companions = otherFiles.filter((file) => baseName(file.name) === baseName(entry.name));
+  imageEntries.push(...ownImages);
   return imageEntries;
 }
 const getPhotoFile = (photo) => (photo.handle ? photo.handle.getFile() : Promise.resolve(photo.file));
@@ -337,7 +345,7 @@ async function startWithEntries(folderName, imageEntries, source = { kind: 'hand
   state.projectKey = source.key;
   // 예전 판은 사진 고르기를 화면 문구(folderName)로 저장했다
   const savedProject = await dbGet(`project:${source.key}`) ?? (source.key !== folderName ? await dbGet(`project:${folderName}`) : undefined);
-  dbSet('lastProject', source);
+  dbSet('lastProject', { kind: source.kind, key: source.key, count: source.count, first: source.first }); // 폴더 핸들은 lastHandle에 따로 둔다
   state.castKeys = null;
   if (savedProject && savedProject.settings?.preset === state.settings.preset) {
     // 같은 폴더, 같은 사진 종류로 다시 열면 결정과 학습 결과를 이어서 쓴다
@@ -352,6 +360,13 @@ async function startWithEntries(folderName, imageEntries, source = { kind: 'hand
     state.expandedGroups = new Set(savedProject.expandedGroups ?? []);
     state.castKeys = savedProject.castKeys ?? null;
   }
+  // 폴더로 열었으면 다 고른 뒤 이 폴더를 정리할지 미리 묻는다 (한 번 답하면 다시 묻지 않는다)
+  state.rootHandle = source.kind === 'handle' ? source.root ?? null : null;
+  state.organize = savedProject?.organize ?? null;
+  if (state.rootHandle?.getDirectoryHandle && !state.organize && imageEntries.some((entry) => entry.dir)) {
+    const answer = await askDialog({ title: t('organizeAskTitle'), body: t('organizeAskBody', escapeHtml(folderName)), input: { label: t('organizeNameLabel'), value: defaultOrganizeName() }, confirm: t('organizeYes'), cancel: t('organizeNo') });
+    state.organize = { asked: true, name: answer.ok ? cleanFolderName(answer.value) || defaultOrganizeName() : null };
+  }
   state.priorModel = await loadPriorModel();
   // 같은 화면에서 사진을 새로 고르면 지난 사진의 썸네일과 원본 주소를 풀어 메모리를 돌려준다
   for (const photo of state.photos) if (photo.thumbUrl) URL.revokeObjectURL(photo.thumbUrl);
@@ -359,6 +374,7 @@ async function startWithEntries(folderName, imageEntries, source = { kind: 'hand
   state.photos = imageEntries.map((entry) => ({
     id: entry.relPath, relPath: entry.relPath, name: entry.name,
     handle: entry.handle ?? null, file: entry.file ?? null,
+    dir: entry.dir ?? null, companions: entry.companions ?? [], // 폴더 정리에 쓴다 (폴더로 열었을 때만)
     thumbUrl: '', takenAt: null, width: 0, height: 0,
     analysis: null,       // 분석 원값
     features: null,       // 점수 항목 10개 (0~1, FEATURE_KEYS 순서)
@@ -380,7 +396,7 @@ $('#pick-folder').onclick = async () => {
     $('#pick-note').textContent = t('pickNoteReading');
     const imageEntries = await collectImageEntries(directoryHandle);
     dbSet('lastHandle', directoryHandle);
-    await startWithEntries(directoryHandle.name, imageEntries);
+    await startWithEntries(directoryHandle.name, imageEntries, { kind: 'handle', key: directoryHandle.name, root: directoryHandle });
   } catch (error) {
     if (error.name !== 'AbortError') showToast(t('folderOpenError', escapeHtml(error.message)));
   }
@@ -468,7 +484,7 @@ function showResume(makeText, buttonKey, onClick) {
     showResume(() => t('resumeName', lastHandle.name), 'resumeButton', async () => {
       if (await lastHandle.requestPermission({ mode: 'read' }) !== 'granted') { showToast(t('permissionNeeded')); return; }
       state.skippedFileCount = 0;
-      await startWithEntries(lastHandle.name, await collectImageEntries(lastHandle));
+      await startWithEntries(lastHandle.name, await collectImageEntries(lastHandle), { kind: 'handle', key: lastHandle.name, root: lastHandle });
     });
   } else if (savedProject && lastProject?.kind === 'photos') {
     // 사진 보관함에서 고른 사진은 다시 열 권한이 없어서, 같은 사진을 다시 고르도록 안내한다
@@ -2608,6 +2624,164 @@ document.addEventListener('keydown', (event) => {
 /* =====================================================================
    내보내기
    ===================================================================== */
+// ---------- 묻고 답 받는 창 ----------
+// 돌려주는 값: {ok: 확인을 눌렀는지, value: 입력칸 값}
+function askDialog({ title, body, input = null, confirm, cancel }) {
+  const dialog = $('#ask');
+  $('#ask-title').textContent = title;
+  $('#ask-body').innerHTML = body;
+  $('#ask-field').classList.toggle('hidden', !input);
+  if (input) { $('#ask-label').textContent = input.label; $('#ask-input').value = input.value; }
+  $('#ask-ok').textContent = confirm;
+  $('#ask-cancel').textContent = cancel;
+  return new Promise((resolve) => {
+    dialog.addEventListener('close', () => resolve({ ok: dialog.returnValue === 'ok', value: $('#ask-input').value }), { once: true });
+    dialog.returnValue = '';
+    dialog.showModal();
+    (input ? $('#ask-input') : $('#ask-ok')).focus();
+  });
+}
+
+// ---------- 폴더 정리: 고른 사진은 새 폴더로, 나머지는 그 안의 others로 원본을 옮긴다 (PC, 폴더로 열었을 때) ----------
+const OTHERS_FOLDER = 'others';
+const MOVE_LOG_NAME = 'moment-select-moves.txt';
+const canOrganize = () => Boolean(state.rootHandle?.getDirectoryHandle) && state.photos.some((photo) => photo.dir);
+function defaultOrganizeName() {
+  const now = new Date();
+  const pad = (value) => String(value).padStart(2, '0');
+  return `moment_${String(now.getFullYear()).slice(2)}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
+}
+// 폴더 이름에 쓸 수 없는 글자를 빼고 앞뒤 공백과 점을 정리한다 (Windows, macOS 모두 안전하게)
+const cleanFolderName = (name) => {
+  const cleaned = String(name ?? '').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '').replace(/\s+/g, ' ').trim().replace(/^\.+|\.+$/g, '').slice(0, 100);
+  return /^(con|prn|aux|nul|com\d|lpt\d)$/i.test(cleaned) ? `${cleaned}_` : cleaned; // Windows가 예약한 이름
+};
+// 같은 이름 폴더가 있으면 'moment_261023 (1)', '(2)'... 처럼 비어 있는 이름을 쓴다
+async function freeFolderName(root, wanted) {
+  for (let index = 0; index < 1000; index++) {
+    const name = index ? `${wanted} (${index})` : wanted;
+    try { await root.getDirectoryHandle(name); continue; } catch (error) { if (error.name !== 'NotFoundError' && error.name !== 'TypeMismatchError') throw error; }
+    try { await root.getFileHandle(name); continue; } catch { /* 같은 이름 파일도 없다 */ }
+    return name;
+  }
+  throw new Error(`no free folder name for ${wanted}`);
+}
+async function createUniqueFolder(root, wanted) {
+  const name = await freeFolderName(root, wanted);
+  return { name, handle: await root.getDirectoryHandle(name, { create: true }) };
+}
+// 한 폴더 안에서 이름이 겹치면 'IMG_0001 (2).jpg'처럼 바꾼다
+function claimName(used, fileName) {
+  const dot = fileName.lastIndexOf('.');
+  const stem = dot > 0 ? fileName.slice(0, dot) : fileName, extension = dot > 0 ? fileName.slice(dot) : '';
+  for (let index = 1; ; index++) {
+    const candidate = index === 1 ? fileName : `${stem} (${index})${extension}`;
+    if (!used.has(candidate.toLowerCase())) { used.add(candidate.toLowerCase()); return candidate; }
+  }
+}
+// 파일 하나 옮기기: 브라우저가 지원하면 move()로 (같은 디스크 안이라 빠르고 공간을 쓰지 않는다),
+// 안 되면 복사하고 크기가 같은지 확인한 뒤 원본을 지운다. 돌려주는 값은 옮긴 뒤의 파일 핸들
+async function moveFileHandle(fileHandle, fromDir, toDir, newName) {
+  if (typeof fileHandle.move === 'function') {
+    try { await fileHandle.move(toDir, newName); return fileHandle; } catch (error) { if (!['NotSupportedError', 'TypeError', 'NotAllowedError'].includes(error.name)) throw error; }
+  }
+  const file = await fileHandle.getFile();
+  const target = await toDir.getFileHandle(newName, { create: true });
+  const writable = await target.createWritable();
+  await file.stream().pipeTo(writable);
+  if ((await target.getFile()).size !== file.size) throw new Error(`copy of ${fileHandle.name} is incomplete`);
+  await fromDir.removeEntry(fileHandle.name);
+  return target;
+}
+let organizeState = { status: 'idle', done: 0, total: 0, log: [], target: null, message: '' }; // idle | moving | done | failed | undoing | undone
+async function ensureWritePermission(handle) {
+  if (!handle.queryPermission) return true; // 브라우저 안 저장소(테스트) 같은 경우는 권한 확인이 없다
+  if (await handle.queryPermission({ mode: 'readwrite' }) === 'granted') return true;
+  return await handle.requestPermission({ mode: 'readwrite' }) === 'granted';
+}
+async function organizeFolder(keepIdList) {
+  if (organizeState.status === 'moving' || organizeState.status === 'undoing') return;
+  const name = cleanFolderName($('#organize-name').value) || defaultOrganizeName();
+  const keepSet = new Set(keepIdList);
+  const undecided = state.photos.filter((photo) => !keepSet.has(photo.id) && !statusOf(photo.id)).length;
+  // 같은 이름 폴더가 이미 있으면 실제로 쓰게 될 이름('이름 (1)')으로 안내한다
+  const finalName = await freeFolderName(state.rootHandle, name).catch(() => name);
+  const answer = await askDialog({ title: t('organizeConfirmTitle'), body: t('organizeConfirmBody', { picks: keepSet.size, rest: state.photos.length - keepSet.size, undecided, name: escapeHtml(finalName) }), confirm: t('organizeConfirm'), cancel: t('organizeCancel') });
+  if (!answer.ok) return;
+  if (!await ensureWritePermission(state.rootHandle)) { showToast(t('organizePermission')); return; }
+  state.organize = { asked: true, name };
+  const photos = [...state.photos].sort((left, right) => left.relPath.localeCompare(right.relPath, undefined, { numeric: true }));
+  organizeState = { status: 'moving', done: 0, total: photos.reduce((sum, photo) => sum + 1 + photo.companions.length, 0), log: [], target: null, message: '' };
+  render();
+  try {
+    const target = await createUniqueFolder(state.rootHandle, name);
+    const others = await target.handle.getDirectoryHandle(OTHERS_FOLDER, { create: true });
+    organizeState.target = target;
+    const used = { keep: new Set([OTHERS_FOLDER, MOVE_LOG_NAME]), others: new Set() };
+    for (const photo of photos) {
+      const keep = keepSet.has(photo.id);
+      const toDir = keep ? target.handle : others;
+      const fromDir = photo.dir;
+      const movedCompanions = [];
+      for (const fileHandle of [photo.handle, ...photo.companions]) {
+        const originalName = fileHandle.name;
+        const newName = claimName(keep ? used.keep : used.others, originalName);
+        const moved = await moveFileHandle(fileHandle, fromDir, toDir, newName);
+        organizeState.log.push({ photoId: photo.id, isPhoto: fileHandle === photo.handle, fromDir, toDir, originalName, newName, handle: moved, from: photo.relPath.replace(/[^/]+$/, originalName), to: `${keep ? '' : `${OTHERS_FOLDER}/`}${newName}` });
+        if (fileHandle === photo.handle) photo.handle = moved; else movedCompanions.push(moved);
+        organizeState.done++;
+        if (organizeState.done % 10 === 0 || organizeState.done === organizeState.total) $('#organize-progress') && ($('#organize-progress').textContent = t('organizeProgress', organizeState));
+      }
+      photo.dir = toDir; photo.companions = movedCompanions;
+    }
+    await writeMoveLog(target);
+    organizeState.status = 'done';
+  } catch (error) {
+    console.warn('organize failed', error);
+    organizeState.status = 'failed';
+    organizeState.message = error.message;
+  }
+  saveProjectSoon();
+  render();
+}
+async function writeMoveLog(target) {
+  const lines = [t('organizeLogHeader', { time: formatTime(Date.now()), name: target.name }), '', ...organizeState.log.map((entry) => `${entry.from} -> ${target.name}/${entry.to}`)];
+  const writable = await (await target.handle.getFileHandle(MOVE_LOG_NAME, { create: true })).createWritable();
+  await writable.write(lines.join('\n'));
+  await writable.close();
+}
+// 되돌리기: 옮긴 순서의 반대로 원래 폴더, 원래 이름으로. 만든 폴더는 비어 있으면 지운다
+async function undoOrganize() {
+  if (!organizeState.log.length || organizeState.status === 'moving' || organizeState.status === 'undoing') return;
+  organizeState.status = 'undoing';
+  const entries = [...organizeState.log].reverse();
+  let done = 0;
+  render();
+  try {
+    for (const entry of entries) {
+      const restored = await moveFileHandle(entry.handle, entry.toDir, entry.fromDir, entry.originalName);
+      const photo = state.photoById.get(entry.photoId);
+      if (entry.isPhoto) { photo.handle = restored; photo.dir = entry.fromDir; } else { photo.companions = [...photo.companions.filter((handle) => handle !== entry.handle), restored]; }
+      done++;
+      if ($('#organize-progress')) $('#organize-progress').textContent = t('organizeUndoing', { done, total: entries.length });
+    }
+    const target = organizeState.target;
+    if (target) {
+      await target.handle.removeEntry(MOVE_LOG_NAME).catch(() => {});
+      await target.handle.removeEntry(OTHERS_FOLDER).catch(() => {}); // 비어 있을 때만 지워진다
+      await state.rootHandle.removeEntry(target.name).catch(() => {});
+    }
+    organizeState = { status: 'undone', done: 0, total: 0, log: [], target: null, message: '' };
+    showToast(t('organizeUndone'));
+  } catch (error) {
+    console.warn('undo organize failed', error);
+    organizeState.log = organizeState.log.slice(0, organizeState.log.length - done);
+    organizeState.status = 'failed';
+    organizeState.message = error.message;
+  }
+  render();
+}
+
 let exportBasis = 'current'; // current | both | either
 
 function selectionIds(basis) {
@@ -2623,6 +2797,30 @@ function selectionListText(ids) {
   const lines = [t('listHeader', photos.length), t('listFolder', state.folderName), t('listCreated', formatTime(Date.now())), '', ...photos.map((photo) => photo.relPath)];
   if (closedEyePhotos.length) lines.push('', t('listEyes', { count: closedEyePhotos.length, wedding: state.settings.preset === 'wedding' && !state.settings.penalizeClosedEyes }), ...closedEyePhotos.map((photo) => photo.relPath));
   return lines.join('\n');
+}
+
+// 내보내기의 '이 폴더 정리하기' 구역: 상태(옮기기 전, 옮기는 중, 끝남, 멈춤)에 따라 다르게 보인다
+function organizeSectionHtml(ids) {
+  const folder = escapeHtml(state.rootHandle.name);
+  const busy = organizeState.status === 'moving' || organizeState.status === 'undoing';
+  const name = escapeHtml(organizeState.target?.name ?? state.organize?.name ?? defaultOrganizeName());
+  let body;
+  if (organizeState.status === 'done') {
+    body = `<p class="organize-result">${t('organizeDone', { count: state.photos.length, name })}</p>
+      <div class="row"><button class="button" id="organize-undo"><i class="ph ph-arrow-counter-clockwise"></i>${t('organizeUndo')}</button><span class="hint num" id="organize-progress"></span></div>`;
+  } else if (organizeState.status === 'failed') {
+    body = `<p class="organize-result error">${t('organizeError', escapeHtml(organizeState.message))}</p>
+      <div class="row">${organizeState.log.length ? `<button class="button primary" id="organize-undo"><i class="ph ph-arrow-counter-clockwise"></i>${t('organizeUndo')}</button>` : ''}<span class="hint num" id="organize-progress"></span></div>`;
+  } else {
+    body = `<p class="hint">${t('organizeHint', { picks: ids.length, rest: state.photos.length - ids.length, folder })}</p>
+      <div class="row">
+        <label class="organize-name"><span class="hint">${t('organizeNameLabel')}</span><input type="text" id="organize-name" value="${name}" maxlength="100" autocomplete="off" spellcheck="false" ${busy ? 'disabled' : ''}></label>
+        <button class="button primary" id="organize-run" ${ids.length && !busy ? '' : 'disabled'}><i class="ph ph-folder-simple-plus"></i>${t('organizeRun')}</button>
+        <span class="hint num" id="organize-progress">${busy ? t(organizeState.status === 'moving' ? 'organizeProgress' : 'organizeUndoing', organizeState) : ''}</span>
+      </div>
+      <p class="hint">${t('organizeNote')}</p>`;
+  }
+  return `<section class="organize"><h2>${t('organizeTitle')}</h2>${body}</section>`;
 }
 
 function renderExportView() {
@@ -2645,6 +2843,14 @@ function renderExportView() {
     <p class="summary num">${bothDecided
       ? t('summaryBoth', { nameA, nameB, keepA: keepA.length, keepB: keepB.length, both: bothCount, onlyA, onlyB })
       : t('summaryOne', { name: escapeHtml(reviewer().name), count: keepIds().length })}</p>
+    ${bothDecided ? `<div class="row basis-row">
+        <div class="segmented" id="basis-options" role="radiogroup" aria-label="${t('basisAria')}">
+          <label><input type="radio" name="basis" value="current" ${exportBasis === 'current' ? 'checked' : ''}>${t('basisCurrent', escapeHtml(reviewer().name))}</label>
+          <label><input type="radio" name="basis" value="both" ${exportBasis === 'both' ? 'checked' : ''}>${t('basisBoth')}</label>
+          <label><input type="radio" name="basis" value="either" ${exportBasis === 'either' ? 'checked' : ''}>${t('basisEither')}</label>
+        </div>
+    </div>` : ''}
+    ${canOrganize() ? organizeSectionHtml(ids) : ''}
 
     <section>
       <h2>${t('saveTitle')}</h2>
@@ -2654,14 +2860,7 @@ function renderExportView() {
           ? t('saveHintShare', SHARE_BATCH_SIZE)
           : t('saveHintDownload')}</p>
       <div class="row">
-        ${bothDecided ? `<div class="segmented" id="basis-options" role="radiogroup" aria-label="${t('basisAria')}">
-          <label><input type="radio" name="basis" value="current" ${exportBasis === 'current' ? 'checked' : ''}>${t('basisCurrent', escapeHtml(reviewer().name))}</label>
-          <label><input type="radio" name="basis" value="both" ${exportBasis === 'both' ? 'checked' : ''}>${t('basisBoth')}</label>
-          <label><input type="radio" name="basis" value="either" ${exportBasis === 'either' ? 'checked' : ''}>${t('basisEither')}</label>
-        </div>` : ''}
-      </div>
-      <div class="row">
-        ${canPickFolder ? `<button class="button primary" id="export-copy" ${ids.length ? '' : 'disabled'}><i class="ph ph-folder-simple-plus"></i>${t('copyToFolder', ids.length)}</button>` : ''}
+        ${canPickFolder ? `<button class="button${canOrganize() ? '' : ' primary'}" id="export-copy" ${ids.length ? '' : 'disabled'}><i class="ph ph-folder-simple-plus"></i>${t('copyToFolder', ids.length)}</button>` : ''}
         ${!canPickFolder && canShareFiles ? `<button class="button primary" id="export-share" ${ids.length ? '' : 'disabled'}><i class="ph ph-share-network"></i>${shareButtonLabel(ids)}</button>` : ''}
         ${!canPickFolder ? `<button class="button${canShareFiles ? '' : ' primary'}" id="export-download" ${ids.length ? '' : 'disabled'}><i class="ph ph-download-simple"></i>${t('downloadEach')}</button>` : ''}
         <button class="button" id="export-list" ${ids.length ? '' : 'disabled'}><i class="ph ph-copy"></i>${t('copyList')}</button>
@@ -2698,6 +2897,8 @@ function renderExportView() {
       </div>
     </details>`;
 
+  if ($('#organize-run')) $('#organize-run').onclick = () => organizeFolder(ids);
+  if ($('#organize-undo')) $('#organize-undo').onclick = undoOrganize;
   if ($('#basis-options')) { markCheckedLabels($('#basis-options')); $('#basis-options').onchange = (event) => { exportBasis = event.target.value; render(); }; }
   $('#export-target').onchange = (event) => { state.settings.target = Math.max(1, parseInt(event.target.value, 10) || 1); saveProjectSoon(); render(); };
   $('#export-list').onclick = async () => {
