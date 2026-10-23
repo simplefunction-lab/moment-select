@@ -45,9 +45,10 @@ const MESSAGES = {
     organizeUndo: '옮기기 되돌리기',
     organizeUndoing: ({ done, total }) => `되돌리는 중 ${num(done)} / ${num(total)}`,
     organizeUndone: '모두 원래 자리로 돌려놨어요.',
+    organizeInterrupted: ({ count, name }) => `지난번 '${name}' 정리가 ${num(count)}개를 옮기다 멈췄어요. 창이 닫혔을 수 있어요. 되돌리기를 누르면 원래 자리로 돌려놓아요.`,
     organizeError: (message) => `옮기다가 멈췄어요. ${message} 되돌리기를 누르면 옮긴 것까지 원래 자리로 돌려놓아요.`,
     organizePermission: '사진을 옮기려면 이 폴더를 편집하도록 허용해 주세요.',
-    organizeLogHeader: ({ time, name }) => `모먼트 셀렉 폴더 정리 기록 (${time})\n'${name}' 폴더를 만들어 옮겼어요. 원래 위치 → 옮긴 위치`,
+    organizeLogHeader: ({ time, name }) => `모먼트 셀렉 폴더 정리 기록 (${time})\n'${name}' 폴더를 만들어 옮겼어요. 원래 위치 → 옮긴 위치\n도중에 멈췄다면 목록 끝쪽 파일은 아직 원래 위치에 있을 수 있어요.`,
     pickAsOther: (name) => `${name} 차례로 고르기`,
     defaultNameA: '나', defaultNameB: '파트너',
 
@@ -276,9 +277,10 @@ const MESSAGES = {
     organizeUndo: 'Undo move',
     organizeUndoing: ({ done, total }) => `Moving back ${num(done)} / ${num(total)}`,
     organizeUndone: 'Everything is back where it was.',
+    organizeInterrupted: ({ count, name }) => `The last sort into "${name}" stopped partway through ${num(count)} files, probably because the page was closed. Undo puts them back.`,
     organizeError: (message) => `Stopped partway. ${message} Undo puts back everything that was moved.`,
     organizePermission: 'Allow editing this folder to move your photos.',
-    organizeLogHeader: ({ time, name }) => `Moment Select folder sort (${time})\nCreated "${name}" and moved: original location -> new location`,
+    organizeLogHeader: ({ time, name }) => `Moment Select folder sort (${time})\nCreated "${name}" and moved: original location -> new location\nIf the sort stopped partway, files near the end of this list may still be in their original location.`,
     pickAsOther: (name) => `Pick as ${name}`,
     defaultNameA: 'Me', defaultNameB: 'Partner',
 
