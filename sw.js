@@ -8,7 +8,7 @@
 //   모델 파일(얼굴, 같은 사람, 미적 점수 약 14MB, 눈 감음 정밀 모델 약 18MB): 처음 분석할 때 받아서 MODEL_CACHE에 보관한다.
 //     앱을 배포해도 지워지지 않아서 한 번만 받는다. 모델 파일 내용을 바꾸면 MODEL_CACHE 이름을 올린다.
 
-const APP_VERSION = 'v12'; // 배포할 때마다 app.js의 APP_VERSION과 같이 올린다
+const APP_VERSION = 'v13'; // 배포할 때마다 app.js의 APP_VERSION과 같이 올린다
 const CACHE_NAME = `moment-select-${APP_VERSION}`;
 const MODEL_CACHE = 'moment-select-models-1';
 const isModelFile = (url) => url.pathname.includes('/vendor/face-api/model/') || url.pathname.includes('/vendor/nima/') || url.pathname.includes('/vendor/mediapipe/');
@@ -24,6 +24,7 @@ const APP_FILES = [
   './index.html',
   './manifest.webmanifest',
   './styles.css',
+  './vendor/confetti/confetti.module.mjs',
   './vendor/exifr/lite.esm.mjs',
   './vendor/face-api/face-api.esm.js',
   './vendor/fonts/nanum-pen-marks-latin.woff2',
@@ -31,6 +32,8 @@ const APP_FILES = [
   './vendor/fonts/pretendard-subset.woff2',
   './vendor/icons/phosphor-subset.woff2',
   './vendor/icons/phosphor.css',
+  './vendor/motion/motion-animate.mjs',
+  './vendor/open-props/easings.min.css',
 ];
 
 self.addEventListener('install', (event) => {

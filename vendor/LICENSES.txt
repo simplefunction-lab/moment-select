@@ -18,3 +18,9 @@ MediaPipe Tasks Vision (@mediapipe/tasks-vision 1.1.1) - Apache License 2.0 - Co
 MediaPipe Face Landmarker 모델 (face_landmarker.task, float16) - Apache License 2.0 - https://ai.google.dev/edge/mediapipe/solutions/vision/face_landmarker
   https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task 에서 받은 그대로
   (sha256 64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff)
+Motion (motion 13.4.6) - MIT License - Copyright (c) 2024 Motion B.V. - https://github.com/motiondivision/motion
+  animate, stagger만 esbuild로 한 파일(motion/motion-animate.mjs)로 묶음. 코드는 바꾸지 않았다
+Open Props (open-props 1.7.23) - MIT License - Copyright (c) 2021 Adam Argyle - https://github.com/argyleink/open-props
+  easings.min.css(이징과 스프링 곡선 변수)만 그대로 복사
+canvas-confetti 1.9.4 - ISC License - Copyright (c) 2020, Kiril Vatev - https://github.com/catdad/canvas-confetti
+  dist/confetti.module.mjs를 그대로 복사

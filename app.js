@@ -6,8 +6,14 @@
    - 처음엔 사진 종류별 기본값, 고르는 동안 남김/뺌과 비슷한 컷 비교로 사람마다 다시 학습
    ===================================================================== */
 
-import { t, getLanguage, setLanguage, applyStaticText, presetText, featureLabel, categoryLabel, allExportPrefixes, isDefaultName } from './i18n.js';
+import { t, num, getLanguage, setLanguage, applyStaticText, presetText, featureLabel, categoryLabel, allExportPrefixes, isDefaultName } from './i18n.js';
 import { buildAestheticModel, scoreAesthetic, AESTHETIC_INPUT } from './aesthetic.js';
+// 스와이프 물리(스프링)와 목표 장수 축하. 둘 다 앱과 함께 배포한다 (vendor/LICENSES.txt)
+import { animate } from './vendor/motion/motion-animate.mjs';
+import { create as createConfetti } from './vendor/confetti/confetti.module.mjs';
+// 움직임 줄이기 설정이면 JS 애니메이션도 바로 끝낸다 (CSS 쪽은 styles.css의 prefers-reduced-motion 규칙)
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+const motion = (element, keyframes, options) => animate(element, keyframes, reducedMotion.matches ? { duration: 0 } : options);
 
 // ---------- 라이브러리 위치 (모두 앱과 함께 배포, 외부 요청 없음) ----------
 const FACE_API_URL = './vendor/face-api/face-api.esm.js';
@@ -86,7 +92,8 @@ const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시�
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
 const CACHE_VERSION = 'v5';             // 분석 방식이 바뀌면 올린다 (v5: 같은 사람 알아보기, 미적 점수)
-const APP_VERSION = 'v12';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
+const APP_VERSION = 'v13';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
+const ANALYZE_SHEET_MAX = 120;           // 분석 화면에 동시에 보여줄 썸네일 수 (1,000장 넘게 불러와도 화면 요소가 계속 늘지 않게)
 const ETA_WARMUP_PHOTOS = 3;             // 이만큼 분석하기 전에는 남은 시간을 보여주지 않는다 (첫 장은 모델 준비로 느리다)
 const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
 const DARK_RETRY_LUMINANCE = 100;        // 평균 밝기가 이보다 어두운데 얼굴을 못 찾으면 밝게 보정해서 한 번 더 찾는다
@@ -112,17 +119,20 @@ const FEATURE_KEYS = ['subjectSharp', 'focusSharp', 'exposure', 'expression', 's
 const EYES_OPEN_WEIGHT = 0.15; // '눈 감은 사진 감점'을 켰을 때 눈 뜸 항목의 기본 비중 (나머지 항목과 합쳐 1로 맞춘다)
 // 사진 종류 이름과 설명 문구는 i18n.js에 있다. castCount: 주인공을 자동으로 몇 명 고를지
 const PRESETS = {
-  wedding: { crowdMin: 5, castCount: 2,
+  wedding: { crowdMin: 5, castCount: 2, target: 30,
     weights: { subjectSharp: .34, focusSharp: .10, exposure: .20, expression: .16, smile: .05, framing: .10, clean: .05, aesthetic: .14, cast: .14 } },
-  travel: { crowdMin: 5, castCount: 1,
+  travel: { crowdMin: 5, castCount: 1, target: 20, // 인스타그램 캐러셀 한 번에 올릴 수 있는 최대 장수
     weights: { subjectSharp: .24, focusSharp: .22, exposure: .22, expression: .10, smile: .08, framing: .06, clean: .08, aesthetic: .20, cast: .06 } },
-  event: { crowdMin: 6, castCount: 1,
+  event: { crowdMin: 6, castCount: 1, target: 30,
     weights: { subjectSharp: .30, focusSharp: .08, exposure: .17, expression: .15, smile: .18, framing: .07, clean: .05, aesthetic: .12, cast: .10 } },
-  family: { crowdMin: 5, castCount: 2,
+  family: { crowdMin: 5, castCount: 2, target: 30,
     weights: { subjectSharp: .36, focusSharp: .08, exposure: .16, expression: .12, smile: .18, framing: .06, clean: .04, aesthetic: .12, cast: .14 } },
-  other: { crowdMin: 5, castCount: 1,
+  other: { crowdMin: 5, castCount: 1, target: 30,
     weights: { subjectSharp: .28, focusSharp: .18, exposure: .20, expression: .12, smile: .08, framing: .07, clean: .07, aesthetic: .16, cast: .06 } },
 };
+// 시작 화면의 사진 종류 순서와 기본값. 해외에서는 원본 수백 장에서 고객이 직접 고르는 웨딩이 드물어서 여행을 앞에 둔다
+const PRESET_ORDER = { en: ['travel', 'event', 'family', 'wedding', 'other'], ko: ['wedding', 'travel', 'event', 'family', 'other'] };
+const presetOrder = () => PRESET_ORDER[getLanguage()] ?? PRESET_ORDER.en;
 // 가중합 w·x 를 로지스틱 모델 sigmoid(bias + θ·x) 로 옮긴다. 순서는 그대로 유지된다
 function modelFromWeights(weights, source, penalizeClosedEyes) {
   // 눈 감음 감점을 끄면 눈 뜸 항목 비중은 0. 켜면 기본 비중을 더하고 전체 합을 1로 다시 맞춘다
@@ -239,19 +249,30 @@ function saveProjectSoon() {
 /* =====================================================================
    시작 화면
    ===================================================================== */
+let presetTouched = false; // 사용자가 사진 종류를 직접 골랐는지 (안 골랐으면 언어를 바꿀 때 기본값도 바꾼다)
+let targetTouched = false; // 사용자가 남길 장수를 직접 바꿨는지 (안 바꿨으면 사진 종류마다 기본 장수를 쓴다)
 function renderPresetOptions() {
-  $('#preset-options').innerHTML = Object.entries(PRESETS).map(([key, value]) =>
+  $('#preset-options').innerHTML = presetOrder().map((key) =>
     `<label><input type="radio" name="preset" value="${key}" ${key === state.settings.preset ? 'checked' : ''}>${presetText(key).label}</label>`).join('');
   $('#preset-hint').textContent = presetText(state.settings.preset).hint;
+  renderTargetHint();
 }
-$('#preset-options').onchange = (event) => {
-  state.settings.preset = event.target.value;
+// 여행에서 20장이면 '인스타그램 캐러셀 한 번 분량'이라고 알려준다
+function renderTargetHint() {
+  const carousel = state.settings.preset === 'travel' && parseInt($('#target-input').value, 10) === PRESETS.travel.target;
+  $('#target-hint').textContent = t(carousel ? 'targetHintCarousel' : 'targetHint');
+}
+function choosePreset(presetKey) {
+  state.settings.preset = presetKey;
   $('#crowd-input').value = preset().crowdMin;
+  if (!targetTouched) $('#target-input').value = preset().target;
   renderPresetOptions();
-};
+}
+$('#preset-options').onchange = (event) => { presetTouched = true; choosePreset(event.target.value); };
+$('#target-input').addEventListener('input', () => { targetTouched = true; renderTargetHint(); });
+choosePreset(presetOrder()[0]);
 $('#category-input').onchange = (event) => $('#crowd-row').classList.toggle('hidden', !event.target.checked);
 if (COLLECT_ENDPOINT) $('#share-field').classList.remove('hidden');
-renderPresetOptions();
 
 function applySettingsFromForm() {
   state.settings.target = Math.max(1, parseInt($('#target-input').value, 10) || 30);
@@ -407,6 +428,7 @@ let resumeText = null; // 이어하기 안내 문구를 만드는 함수 (언어
 // 지난번 설정을 시작 화면에 되살린다. 사진 종류가 같아야 결정을 이어 쓰므로, 같은 사진을 다시 고르면 그대로 이어진다
 function restoreSettingsForm(savedProject) {
   Object.assign(state.settings, savedProject.settings);
+  presetTouched = true; targetTouched = true;
   $('#target-input').value = state.settings.target;
   $('#category-input').checked = state.settings.useCategories;
   $('#crowd-row').classList.toggle('hidden', !state.settings.useCategories);
@@ -1016,7 +1038,11 @@ async function analyzeAll() {
       : Math.round(((performance.now() - rateStartedAt) / 1000 / (finishedCount - 1)) * (totalCount - finishedCount));
     $('#analyze-meter').style.width = `${(finishedCount / totalCount) * 100}%`;
     $('#analyze-text').textContent = t('analyzeProgress', { done: finishedCount, total: totalCount, seconds: remainingSeconds, faceOff: !faceApi });
-    if (photo.thumbUrl) $('#analyze-sheet').insertAdjacentHTML('beforeend', `<img src="${photo.thumbUrl}" alt="">`);
+    if (photo.thumbUrl) {
+      const sheet = $('#analyze-sheet');
+      sheet.insertAdjacentHTML('beforeend', `<img src="${photo.thumbUrl}" alt="">`);
+      if (sheet.childElementCount > ANALYZE_SHEET_MAX) sheet.firstElementChild.remove();
+    }
   }
   // 브라우저가 열지 못한 사진(HEIC 등)은 고를 수도 없으니 목록에서 뺀다
   const unreadable = state.photos.filter((photo) => photo.analysis.failed);
@@ -1443,7 +1469,16 @@ function buildUnits() {
 function emptyUndo() { return { reviewerKey: state.currentReviewer, previous: [], roundMarks: [] }; }
 
 // changes: [{id, status}], preferences: 비슷한 컷끼리 고른 결과 [{winnerId, loserId}] (쌍 비교 학습용)
+// 되돌리기 버튼: 넓은 화면에서는 'Undo' 글자를 붙이고, 방금 결정했으면 잠깐 강조해서 되돌릴 수 있다는 걸 알린다
+let lastDecisionAt = 0;
+let undoNudges = 0;
+const UNDO_NUDGE_MS = 600;   // 결정 뒤 이 시간 안에 그린 조작 줄이면 되돌리기 버튼을 강조한다
+const UNDO_NUDGE_LIMIT = 3;  // 처음 이만큼만 (되돌릴 수 있다는 걸 알리는 용도, 그 뒤로는 방해만 된다)
+const shouldNudgeUndo = () => performance.now() - lastDecisionAt < UNDO_NUDGE_MS && undoNudges < UNDO_NUDGE_LIMIT && ++undoNudges > 0;
+const undoButtonHtml = () => `<button class="button icon-only undo${shouldNudgeUndo() ? ' nudge' : ''}" id="act-undo" title="${t('undoTitle')}" aria-label="${t('undo')}"><i class="ph ph-arrow-counter-clockwise"></i><span class="undo-label">${t('undo')}</span></button>`;
+
 function recordDecisions(changes, stage, preferences = []) {
+  lastDecisionAt = performance.now();
   const now = Date.now();
   const undoEntry = emptyUndo();
   const winnersByLoser = new Map(); // 진 사진 id에서 이긴 사진 [{id, score}]로
@@ -1589,6 +1624,9 @@ const PICK_VIEWS = ['first', 'distill', 'rescue'];
 function setView(viewName) {
   state.view = viewName;
   state.priorityIds = [];
+  const immersive = PICK_VIEWS.includes(viewName);
+  document.body.classList.toggle('immersive', immersive);
+  $('meta[name="theme-color"]').content = immersive ? '#24282A' : '#F8F9F7';
   for (const section of document.querySelectorAll('.view')) section.classList.add('hidden');
   $(`#view-${PICK_VIEWS.includes(viewName) ? 'pick' : viewName}`).classList.remove('hidden');
   render();
@@ -1606,6 +1644,7 @@ $('#reviewer-select').onchange = (event) => {
   render();
 };
 
+let previousKeepCount = null; // 직전에 그린 남긴 장수 (목표를 맞추는 순간을 알아보려고)
 function renderTopbar() {
   const ready = state.analysisDone;
   for (const button of document.querySelectorAll('#tabs button')) {
@@ -1615,12 +1654,17 @@ function renderTopbar() {
   }
   const keepCount = ready ? keepIds().length : 0;
   const target = state.settings.target;
-  $('#tab-first').textContent = ready ? undecidedCount() : '';
-  $('#tab-keep').textContent = ready ? keepCount : '';
-  $('#tab-drop').textContent = ready ? dropIds().length : '';
-  $('#goal-count').textContent = keepCount;
-  $('#goal-target').textContent = target;
+  $('#tab-first').textContent = ready ? num(undecidedCount()) : '';
+  $('#tab-keep').textContent = ready ? num(keepCount) : '';
+  $('#tab-drop').textContent = ready ? num(dropIds().length) : '';
+  $('#goal-count').textContent = num(keepCount);
+  $('#goal-target').textContent = num(target);
+  $('#goal').classList.toggle('hidden', !ready); // 사진을 불러오기 전 시작 화면에서는 '남긴 사진 0 / 목표'를 숨긴다
   $('#goal').classList.toggle('over', keepCount > target);
+  $('#goal').classList.toggle('hit', ready && keepCount === target);
+  // 고르는 중에 남긴 장수가 목표와 딱 맞게 바뀌는 순간만 (처음 열 때나 다른 화면에서는 아님)
+  if (ready && PICK_VIEWS.includes(state.view) && previousKeepCount !== null && previousKeepCount !== keepCount && keepCount === target) celebrate();
+  previousKeepCount = ready ? keepCount : null;
   $('#goal-note').textContent = keepCount > target ? t('goalOver', keepCount - target) : '';
   $('#goal-meter').style.width = `${Math.min(100, (keepCount / target) * 100)}%`;
   $('#reviewer-select').innerHTML = Object.entries(state.reviewers)
@@ -1654,7 +1698,7 @@ function renderFilters(sourcePhotos) {
   for (const photo of sourcePhotos) { const category = categoryOf(photo); counts[category] = (counts[category] ?? 0) + 1; }
   filters.innerHTML = ['all', 'solo', 'pair', 'small', 'crowd', 'none', 'unknown']
     .filter((key) => key === 'all' || counts[key])
-    .map((key) => `<button data-category="${key}" aria-pressed="${state.categoryFilter === key}">${categoryLabel(key)}<span class="num">${counts[key] ?? 0}</span></button>`).join('');
+    .map((key) => `<button data-category="${key}" aria-pressed="${state.categoryFilter === key}">${categoryLabel(key)}<span class="num">${num(counts[key] ?? 0)}</span></button>`).join('');
 }
 $('#filters').onclick = (event) => {
   const button = event.target.closest('[data-category]');
@@ -1795,6 +1839,32 @@ function renderPickView() {
   return renderSingle(stage, head, queue.slice(1, 3).map((photo) => photo.id), 'rescue');
 }
 
+// ---------- 앰비언트 배경: 지금 사진을 크게 흐려 화면 전체에 깐다 ----------
+let ambientUrl = '';
+function setAmbient(url) {
+  if (!url || url === ambientUrl) return;
+  ambientUrl = url;
+  const [first, second] = document.querySelectorAll('#ambient .layer');
+  const [showing, next] = first.classList.contains('on') ? [first, second] : [second, first];
+  next.style.backgroundImage = `url("${url}")`;
+  next.classList.add('on');
+  showing.classList.remove('on');
+}
+
+// ---------- 목표 장수를 딱 맞췄을 때 축하 ----------
+// 그리스 펜슬 빨강과 인화지 색만 쓴다. 움직임 줄이기 설정이면 건너뛴다
+let confettiShooter = null;
+let lastCelebratedAt = 0;
+function celebrate() {
+  if (performance.now() - lastCelebratedAt < 4000) return;
+  lastCelebratedAt = performance.now();
+  confettiShooter ??= createConfetti($('#celebrate'), { resize: true, useWorker: false, disableForReducedMotion: true });
+  const colors = ['#C8261C', '#E8473C', '#F6D5D0', '#F8F9F7', '#F1B84B'];
+  for (const [x, angle] of [[0.08, 60], [0.92, 120]]) {
+    confettiShooter({ particleCount: 70, spread: 62, startVelocity: 52, angle, origin: { x, y: 0.95 }, colors, scalar: 0.95, ticks: 220 });
+  }
+}
+
 let currentKeys = null;   // 지금 화면의 키보드 동작 {left, right, down, zoom, faces, number}
 let stagePhotoId = null;  // 무대에 낱장으로 떠 있는 사진 id (점수 기준 패널에서 사용)
 
@@ -1836,13 +1906,24 @@ function renderSingle(stage, photo, preloadIds, stageName) {
   for (const id of preloadIds) fullImageUrl(state.photoById.get(id));
   const ratio = photo.width && photo.height ? photo.width / photo.height : 1.5;
   const keepWord = stageName === 'distill' ? t('keepStill') : t('keep');
+  const nextPhoto = preloadIds.length ? state.photoById.get(preloadIds[0]) : null;
+  const nextRatio = nextPhoto?.width && nextPhoto?.height ? nextPhoto.width / nextPhoto.height : 1.5;
   stage.innerHTML = `
-    <div class="frame" style="--ratio:${ratio}">
-      <div class="photo"><img src="${photo.thumbUrl}" alt="${escapeHtml(photo.name)}"></div>
-      ${mainFacesOf(photo).map((face) => `<div class="facebox ${face.eyesClosed ? 'closed' : ''}" style="left:${face.box.x * 100}%;top:${face.box.y * 100}%;width:${face.box.w * 100}%;height:${face.box.h * 100}%"></div>`).join('')}
-      <div class="tags">${photoTagsHtml(photo, { showAdded: stageName === 'distill' })}<span class="tag path">${escapeHtml(photo.relPath)}</span></div>
+    <div class="deck">
+      ${nextPhoto ? `<div class="frame peek" style="--ratio:${nextRatio}" aria-hidden="true"><div class="photo"><img src="${nextPhoto.thumbUrl}" alt=""></div></div>` : ''}
+      <div class="frame current" style="--ratio:${ratio}">
+        <div class="photo"><img src="${photo.thumbUrl}" alt="${escapeHtml(photo.name)}"></div>
+        ${mainFacesOf(photo).map((face) => `<div class="facebox ${face.eyesClosed ? 'closed' : ''}" style="left:${face.box.x * 100}%;top:${face.box.y * 100}%;width:${face.box.w * 100}%;height:${face.box.h * 100}%"></div>`).join('')}
+        <div class="tags">${photoTagsHtml(photo, { showAdded: stageName === 'distill' })}<span class="tag path">${escapeHtml(photo.relPath)}</span></div>
+      </div>
     </div>`;
-  const frame = $('.frame', stage);
+  const frame = $('.frame.current', stage);
+  const peek = $('.frame.peek', stage);
+  if (nextPhoto) frame.dataset.nextId = nextPhoto.id;
+  setAmbient(photo.thumbUrl);
+  // 뒤에 있던 카드가 앞으로 나온 경우는 이미 제자리라 그대로 두고, 아니면 살짝 튀어 오르며 나타난다
+  if (promotedPhotoId !== photo.id) motion(frame, { opacity: [0, 1], transform: ['translateY(14px) scale(.95)', 'translateY(0px) scale(1)'] }, { duration: 0.26, ease: [0.16, 1, 0.3, 1] });
+  promotedPhotoId = null;
   const keepMark = cloneMark('keep'), dropMark = cloneMark('drop');
   frame.append(keepMark, dropMark);
   const image = $('.photo img', frame);
@@ -1867,7 +1948,7 @@ function renderSingle(stage, photo, preloadIds, stageName) {
     state.priorityIds = [];
     render();
   };
-  attachSwipe(frame, keepMark, dropMark, decide);
+  attachSwipe(frame, keepMark, dropMark, decide, peek);
 
   let zoomed = false;
   const largestFace = [...mainFacesOf(photo)].sort((left, right) => right.box.h - left.box.h)[0];
@@ -1886,11 +1967,11 @@ function renderSingle(stage, photo, preloadIds, stageName) {
 
   $('#controls').innerHTML = `
     <button class="button decide" id="act-drop"><i class="ph ph-x"></i>${t('drop')}<kbd>←</kbd></button>
-    <button class="button icon-only" id="act-undo" title="${t('undoTitle')}" aria-label="${t('undo')}"><i class="ph ph-arrow-counter-clockwise"></i></button>
+    ${undoButtonHtml()}
     <button class="button icon-only" id="act-zoom" title="${t('zoomTitle')}" aria-label="${t('zoomTitle')}"><i class="ph ph-magnifying-glass-plus"></i></button>
     <button class="button icon-only" id="act-faces" title="${t('facesTitle')}" aria-label="${t('facesTitle')}"><i class="ph ph-user-focus"></i></button>
     <button class="button decide keep" id="act-keep"><i class="ph ph-circle"></i>${keepWord}<kbd>→</kbd></button>`;
-  const leave = (status) => leaveFrame(frame, status === 'keep' ? keepMark : dropMark, status, decide);
+  const leave = (status) => leaveFrame(frame, status === 'keep' ? keepMark : dropMark, status, decide, { peek, nextId: nextPhoto?.id });
   $('#act-drop').onclick = () => leave('drop');
   $('#act-keep').onclick = () => leave('keep');
   $('#act-undo').onclick = undoLast;
@@ -1899,43 +1980,67 @@ function renderSingle(stage, photo, preloadIds, stageName) {
   currentKeys = { left: () => leave('drop'), right: () => leave('keep'), zoom: toggleZoom, faces: () => frame.classList.toggle('show-faces') };
 }
 
-// 결정하면 그리스 펜슬 표시를 그린 뒤 사진을 옆으로 보낸다
-function leaveFrame(frame, mark, status, onDone) {
+// 결정하면 그리스 펜슬 표시를 그린 뒤 사진을 옆으로 날려 보낸다. 뒤에 있던 다음 사진은 스프링으로 앞으로 나온다
+// fromX: 손가락으로 끌던 위치 (버튼과 키보드는 0)
+let promotedPhotoId = null; // 뒤에서 앞으로 나온 사진 (다음 그리기에서 등장 애니메이션을 건너뛴다)
+const SWIPE_LEAVE_MS = 320; // 결정을 반영하기까지 (펜슬 표시를 그리고 사진이 나가는 시간). 하루 수백 번 하는 동작이라 짧게
+function leaveFrame(frame, mark, status, onDone, { peek = null, nextId = null, fromX = 0 } = {}) {
   if (frame.dataset.leaving) return;
   frame.dataset.leaving = '1';
   mark.style.opacity = '';
   mark.classList.add('drawn');
   const direction = status === 'keep' ? 1 : -1;
+  const startTransform = `translateX(${fromX}px) rotate(${fromX / 40}deg)`;
+  // 끌던 중이면 바로, 버튼이면 표시가 그려지는 걸 잠깐 보여준 뒤 날린다
   setTimeout(() => {
-    frame.classList.add('leave');
-    frame.style.transform = `translateX(${direction * 70}vw) rotate(${direction * 6}deg)`;
-    frame.style.opacity = '0';
-  }, 170);
-  setTimeout(() => onDone(status), 400);
+    motion(frame, { transform: [startTransform, `translateX(${direction * Math.max(window.innerWidth, 600) * 0.9}px) rotate(${direction * 14}deg)`], opacity: [1, 0] },
+      { duration: 0.22, ease: [0.4, 0, 1, 1] });
+    if (peek) {
+      promotedPhotoId = nextId;
+      // transform과 opacity만 움직인다 (filter는 매 프레임 다시 그려서 휴대폰에서 버벅인다)
+      motion(peek, { transform: [peek.style.transform || 'translateY(16px) scale(.93)', 'translateY(0px) scale(1)'], opacity: [0.55, 1] },
+        { type: 'spring', bounce: 0.1, duration: 0.3 });
+    }
+  }, fromX ? 0 : 110);
+  setTimeout(() => onDone(status), fromX ? SWIPE_LEAVE_MS - 120 : SWIPE_LEAVE_MS);
 }
 
-function attachSwipe(frame, keepMark, dropMark, onDecide) {
-  let startX = 0, deltaX = 0, dragging = false;
+// 손가락으로 끌기: 놓을 때 충분히 멀리 갔거나 빠르게 튕겼으면 결정, 아니면 스프링으로 제자리
+const SWIPE_DISTANCE = 120;      // 이만큼(px) 끌면 결정
+const SWIPE_FLICK_SPEED = 0.6;   // 이보다 빠르게(px/ms) 튕기면 짧게 끌어도 결정
+function attachSwipe(frame, keepMark, dropMark, onDecide, peek = null) {
+  let startX = 0, deltaX = 0, dragging = false, lastX = 0, lastTime = 0, velocity = 0;
   frame.addEventListener('pointerdown', (event) => {
-    if (frame.classList.contains('zoomed') || event.button !== 0) return;
-    dragging = true; startX = event.clientX; deltaX = 0;
+    if (frame.classList.contains('zoomed') || event.button !== 0 || frame.dataset.leaving) return;
+    dragging = true; startX = lastX = event.clientX; deltaX = 0; velocity = 0; lastTime = performance.now();
     frame.setPointerCapture(event.pointerId);
-    frame.classList.add('dragging'); frame.classList.remove('settle');
   });
   frame.addEventListener('pointermove', (event) => {
     if (!dragging) return;
+    const now = performance.now();
+    velocity = (event.clientX - lastX) / Math.max(1, now - lastTime);
+    lastX = event.clientX; lastTime = now;
     deltaX = event.clientX - startX;
     frame.style.transform = `translateX(${deltaX}px) rotate(${deltaX / 40}deg)`;
     keepMark.style.opacity = clamp01(deltaX / 140);
     dropMark.style.opacity = clamp01(-deltaX / 140);
+    // 끄는 만큼 뒤 사진이 조금씩 앞으로
+    if (peek) {
+      const progress = clamp01(Math.abs(deltaX) / 260);
+      peek.style.transform = `translateY(${16 - progress * 8}px) scale(${0.93 + progress * 0.03})`;
+    }
   });
   const finish = () => {
     if (!dragging) return;
     dragging = false;
-    frame.classList.remove('dragging');
-    if (Math.abs(deltaX) > 120) { leaveFrame(frame, deltaX > 0 ? keepMark : dropMark, deltaX > 0 ? 'keep' : 'drop', onDecide); return; }
-    frame.classList.add('settle');
-    frame.style.transform = '';
+    const flicked = Math.abs(velocity) > SWIPE_FLICK_SPEED && Math.abs(deltaX) > 30 && Math.sign(velocity) === Math.sign(deltaX);
+    if (Math.abs(deltaX) > SWIPE_DISTANCE || flicked) {
+      const status = deltaX > 0 ? 'keep' : 'drop';
+      leaveFrame(frame, status === 'keep' ? keepMark : dropMark, status, onDecide, { peek, nextId: peek ? frame.dataset.nextId : null, fromX: deltaX });
+      return;
+    }
+    motion(frame, { transform: [`translateX(${deltaX}px) rotate(${deltaX / 40}deg)`, 'translateX(0px) rotate(0deg)'] }, { type: 'spring', bounce: 0.2, duration: 0.35 });
+    if (peek) motion(peek, { transform: [peek.style.transform || 'translateY(16px) scale(.93)', 'translateY(16px) scale(.93)'] }, { duration: 0.2, ease: [0.16, 1, 0.3, 1] });
     keepMark.style.opacity = ''; dropMark.style.opacity = '';
   };
   frame.addEventListener('pointerup', finish);
@@ -1948,6 +2053,7 @@ let burstSelection = { key: null, selected: new Set() };
 function renderBurst(stage, unit) {
   keepOnlyUrls([]);
   const groupMembers = unit.ids.map((id) => state.photoById.get(id)).sort((left, right) => right.score - left.score);
+  setAmbient(groupMembers[0]?.thumbUrl);
   // 묶음 밖에서 이미 남긴 비슷한 사진도 같이 보여준다 (따로 남긴 컷과 나란히 비교할 수 있게)
   const groupIdSet = new Set(unit.ids);
   const outsideKept = [];
@@ -2015,7 +2121,7 @@ function renderBurst(stage, unit) {
   const dropAll = () => { burstSelection.selected.clear(); confirm(); };
   $('#controls').innerHTML = `
     <button class="button decide" id="act-dropall"><i class="ph ph-x"></i>${t('dropAll')}<kbd>←</kbd></button>
-    <button class="button icon-only" id="act-undo" title="${t('undoTitle')}" aria-label="${t('undo')}"><i class="ph ph-arrow-counter-clockwise"></i></button>
+    ${undoButtonHtml()}
     <button class="button decide keep" id="act-confirm"></button>`;
   updateConfirm();
   $('#act-dropall').onclick = dropAll;
@@ -2050,6 +2156,7 @@ function renderKeptCompare(stage, currentPhoto, keptLookalikes, stageName) {
   if (keptCompareCursor.photoId !== currentPhoto.id) keptCompareCursor = { photoId: currentPhoto.id, index: 0 };
   const keptPhoto = keptLookalikes[keptCompareCursor.index % keptLookalikes.length];
   keepOnlyUrls([currentPhoto.id, keptPhoto.id]);
+  setAmbient(currentPhoto.thumbUrl);
   stage.innerHTML = `
     <div class="kept-compare">
       <div class="burst-head">
@@ -2095,7 +2202,7 @@ function renderKeptCompare(stage, currentPhoto, keptLookalikes, stageName) {
   $('#controls').innerHTML = `
     <button class="button decide" id="act-drop-current" aria-label="${t('dropCurrent')}"><i class="ph ph-x"></i><span class="label-long">${t('dropCurrent')}</span><span class="label-short">${t('dropCurrentShort')}</span><kbd>←</kbd></button>
     <button class="button decide" id="act-keep-both" aria-label="${t('keepBoth')}"><span class="label-long">${t('keepBoth')}</span><span class="label-short">${t('keepBothShort')}</span><kbd>↓</kbd></button>
-    <button class="button icon-only" id="act-undo" title="${t('undoTitle')}" aria-label="${t('undo')}"><i class="ph ph-arrow-counter-clockwise"></i></button>
+    ${undoButtonHtml()}
     <button class="button decide keep" id="act-swap" aria-label="${t('swapToCurrent')}"><i class="ph ph-circle"></i><span class="label-long">${t('swapToCurrent')}</span><span class="label-short">${t('swapShort')}</span><kbd>→</kbd></button>`;
   $('#act-drop-current').onclick = dropCurrent;
   $('#act-keep-both').onclick = keepBoth;
@@ -2107,6 +2214,7 @@ function renderKeptCompare(stage, currentPhoto, keptLookalikes, stageName) {
 // ---------- 두 장 비교 ----------
 function renderCompare(stage, [leftPhoto, rightPhoto]) {
   keepOnlyUrls([leftPhoto.id, rightPhoto.id]);
+  setAmbient(leftPhoto.thumbUrl);
   stage.innerHTML = `<div class="compare">${[leftPhoto, rightPhoto].map((photo, index) => `
     <button class="shot" data-side="${index}" aria-label="${index === 0 ? t('compareKeepLeft') : t('compareKeepRight')}">
       <img src="${photo.thumbUrl}" alt="${escapeHtml(photo.name)}">
@@ -2142,7 +2250,7 @@ function renderCompare(stage, [leftPhoto, rightPhoto]) {
   $('#controls').innerHTML = `
     <button class="button decide" id="act-left">${t('keepLeft')}<kbd>←</kbd></button>
     <button class="button decide" id="act-both">${t('keepBoth')}<kbd>↓</kbd></button>
-    <button class="button icon-only" id="act-undo" title="${t('undoTitle')}" aria-label="${t('undo')}"><i class="ph ph-arrow-counter-clockwise"></i></button>
+    ${undoButtonHtml()}
     <button class="button decide" id="act-right">${t('keepRight')}<kbd>→</kbd></button>`;
   $('#act-left').onclick = () => keepOne(0);
   $('#act-right').onclick = () => keepOne(1);
@@ -2587,6 +2695,7 @@ function applyLanguage() {
     if (isDefaultName($(inputId).value.trim())) $(inputId).value = t(defaultKey);
     if (isDefaultName(state.reviewers[reviewerKey].name)) state.reviewers[reviewerKey].name = t(defaultKey);
   }
+  if (!presetTouched && !state.photos.length) choosePreset(presetOrder()[0]);
   renderPresetOptions();
   render();
   renderUpdateBar();
