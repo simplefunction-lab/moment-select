@@ -96,7 +96,7 @@ const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시�
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
 const CACHE_VERSION = 'v5';             // 분석 방식이 바뀌면 올린다 (v5: 같은 사람 알아보기, 미적 점수)
-const APP_VERSION = 'v22';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
+const APP_VERSION = 'v23';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
 const ANALYZE_SHEET_MAX = 120;           // 분석 화면에 동시에 보여줄 썸네일 수 (1,000장 넘게 불러와도 화면 요소가 계속 늘지 않게)
 const ETA_WARMUP_PHOTOS = 3;             // 이만큼 분석하기 전에는 남은 시간을 보여주지 않는다 (첫 장은 모델 준비로 느리다)
 const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
@@ -2807,6 +2807,7 @@ async function organizeFolder(keepIdList) {
       }
       if ($('#organize-progress')) $('#organize-progress').textContent = t('organizeProgress', organizeState);
     }
+    await removeEmptiedFolders(plan.map((move) => dirOf(move.from)));
     organizeRecord.status = 'done';
     organizeState.status = 'done';
   } catch (error) {
@@ -2818,6 +2819,26 @@ async function organizeFolder(keepIdList) {
   await saveOrganizeRecord();
   saveProjectSoon();
   render();
+}
+// 정리하느라 비게 된 원래 하위 폴더(day1 같은)를 지운다. 앱이 옮기지 않은 파일이 하나라도 남아 있으면 그대로 둔다.
+// macOS와 Windows가 알아서 만드는 .DS_Store, Thumbs.db, desktop.ini만 남은 폴더는 빈 폴더로 본다. 고른 폴더 자체는 지우지 않고, 되돌리면 다시 만든다
+const SYSTEM_JUNK_FILES = new Set(['.DS_Store', 'Thumbs.db', 'desktop.ini']);
+async function removeEmptiedFolders(dirPaths) {
+  const candidates = new Set();
+  for (const dirPath of dirPaths) for (let dir = dirPath; dir; dir = dirOf(dir)) candidates.add(dir);
+  const deepestFirst = [...candidates].sort((left, right) => right.split('/').length - left.split('/').length);
+  for (const dirPath of deepestFirst) {
+    try {
+      const dir = await resolveDir(state.rootHandle, dirPath);
+      const names = [];
+      for await (const name of dir.keys()) names.push(name);
+      if (names.some((name) => !SYSTEM_JUNK_FILES.has(name))) continue;
+      for (const name of names) await dir.removeEntry(name);
+      await (await resolveDir(state.rootHandle, dirOf(dirPath))).removeEntry(nameOf(dirPath));
+    } catch (error) {
+      console.warn('remove emptied folder failed', dirPath, error); // 못 지워도 정리 자체는 끝난 것이다
+    }
+  }
 }
 // 사람이 읽는 기록 파일 (앱 밖에서도 손으로 되돌릴 수 있게). 묶음을 옮기기 전에 그 묶음까지 적어 새로 쓴다
 async function writeMoveLog(targetDir, targetName, moves) {
