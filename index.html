@@ -28,11 +28,8 @@
     <button data-view="export" disabled><span data-i18n="tabExport">Export</span></button>
   </nav>
   <span class="spacer"></span>
-  <select id="language-select" aria-label="Language" data-i18n-aria="languageAria">
-    <option value="ko">한국어</option>
-    <option value="en">English</option>
-  </select>
-  <select id="reviewer-select" aria-label="Who is picking" data-i18n-aria="reviewerAria"></select>
+  <!-- 둘이 고를 때만 보이는 사람 전환 (혼자 쓰면 숨긴다) -->
+  <div class="reviewer-toggle hidden" id="reviewer-toggle" role="radiogroup" aria-label="Who is picking" data-i18n-aria="reviewerAria"></div>
   <div class="goal" id="goal">
     <div class="goal-line"><span><span data-i18n="goalKept">Kept</span> <b class="num" id="goal-count">0</b> / <span class="num" id="goal-target">0</span><span data-i18n="goalUnit"></span></span><span class="goal-note num" id="goal-note"></span></div>
     <div class="goal-meter"><span id="goal-meter"></span></div>
@@ -69,7 +66,7 @@
         <div class="field">
           <label for="target-input" data-i18n="fieldTarget">Photos to keep</label>
           <div class="control">
-            <div class="inline"><input type="number" id="target-input" min="1" value="20"><span class="hint" id="target-hint">Fits one Instagram carousel. You can change this anytime.</span></div>
+            <div class="inline"><span class="stepper"><button type="button" class="step" data-step="-1" aria-label="Fewer" data-i18n-aria="stepDown"><i class="ph ph-minus" aria-hidden="true"></i></button><input type="number" id="target-input" min="1" value="20" inputmode="numeric"><button type="button" class="step" data-step="1" aria-label="More" data-i18n-aria="stepUp"><i class="ph ph-plus" aria-hidden="true"></i></button></span><span class="hint" id="target-hint">Fits one Instagram carousel. You can change this anytime.</span></div>
           </div>
         </div>
       </div>
@@ -88,7 +85,7 @@
           <span class="label" data-i18n="fieldGrouping">Group by</span>
           <div class="control">
             <label class="check"><input type="checkbox" id="category-input" checked><span><span data-i18n="categoryCheck">Sort by number of people</span><br><span class="hint" data-i18n="categoryHint">Filter by solo, pairs, small groups and crowds.</span></span></label>
-            <div class="inline" id="crowd-row"><span class="hint" data-i18n="crowdLabel">Crowd starts at</span><input type="number" id="crowd-input" min="3" value="5"><span class="hint" data-i18n="crowdUnit">people</span></div>
+            <div class="inline" id="crowd-row"><span class="hint" data-i18n="crowdLabel">Crowd starts at</span><span class="stepper"><button type="button" class="step" data-step="-1" aria-label="Fewer" data-i18n-aria="stepDown"><i class="ph ph-minus" aria-hidden="true"></i></button><input type="number" id="crowd-input" min="3" value="5" inputmode="numeric"><button type="button" class="step" data-step="1" aria-label="More" data-i18n-aria="stepUp"><i class="ph ph-plus" aria-hidden="true"></i></button></span><span class="hint" data-i18n="crowdUnit">people</span></div>
           </div>
         </div>
         <div class="field">
@@ -117,6 +114,11 @@
           </div>
         </div>
       </details>
+      <!-- 언어는 브라우저 설정으로 정해지니, 바꿀 일이 드물어서 맨 아래에 작게 -->
+      <div class="lang-switch" role="group" aria-label="Language" data-i18n-aria="languageAria">
+        <button type="button" data-lang="en" lang="en">English</button>
+        <button type="button" data-lang="ko" lang="ko">한국어</button>
+      </div>
       <input type="file" id="fallback-input" webkitdirectory multiple hidden>
       <input type="file" id="photos-input" multiple accept="image/*" hidden>
     </div>
@@ -144,7 +146,7 @@
         <div class="filters" id="filters"></div>
         <span class="notice" id="notice"></span>
         <span class="spacer"></span>
-        <label class="check hidden" id="compare-wrap"><input type="checkbox" id="compare-input"><span data-i18n="compareToggle">Side by side</span></label>
+        <button class="button quiet hidden" id="compare-toggle" aria-pressed="false" aria-label="Side by side" data-i18n-aria="compareToggle"><i class="ph ph-columns"></i><span class="label" data-i18n="compareToggle">Side by side</span></button>
         <button class="button quiet hidden" id="cast-button" popovertarget="cast" aria-label="Main people" data-i18n-aria="castButton"><i class="ph ph-user-focus"></i><span class="label" data-i18n="castButton">Main people</span></button>
         <button class="button quiet" id="criteria-button" popovertarget="criteria" aria-label="Scoring" data-i18n-aria="criteriaButton"><i class="ph ph-sliders-horizontal"></i><span class="label" data-i18n="criteriaButton">Scoring</span></button>
       </div>

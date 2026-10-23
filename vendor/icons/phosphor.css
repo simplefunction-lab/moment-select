@@ -21,3 +21,6 @@
 .ph.ph-share-network::before { content: "\e408"; }
 .ph.ph-arrow-u-up-left::before { content: "\e08a"; }
 .ph.ph-lock-simple::before { content: "\e308"; }
+.ph.ph-columns::before { content: "\e546"; }
+.ph.ph-minus::before { content: "\e32a"; }
+.ph.ph-plus::before { content: "\e3d4"; }
