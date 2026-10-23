@@ -1,0 +1,13 @@
+# Brand-video material (photos, screen recordings, renders) lives outside this repo in ../moment-select-private.
+# These patterns are a second safety net in case any of it is copied in by mistake.
+private/
+recordings/
+renders/
+*.mp4
+*.mov
+*.webm
+*.jpg
+*.jpeg
+*.heic
+*.png
+!icons/*.png

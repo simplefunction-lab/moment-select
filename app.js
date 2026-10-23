@@ -96,7 +96,7 @@ const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시�
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
 const CACHE_VERSION = 'v5';             // 분석 방식이 바뀌면 올린다 (v5: 같은 사람 알아보기, 미적 점수)
-const APP_VERSION = 'v21';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
+const APP_VERSION = 'v22';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
 const ANALYZE_SHEET_MAX = 120;           // 분석 화면에 동시에 보여줄 썸네일 수 (1,000장 넘게 불러와도 화면 요소가 계속 늘지 않게)
 const ETA_WARMUP_PHOTOS = 3;             // 이만큼 분석하기 전에는 남은 시간을 보여주지 않는다 (첫 장은 모델 준비로 느리다)
 const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
@@ -540,6 +540,8 @@ const eyeCropCanvas = document.createElement('canvas'); // 얼굴 둘레를 잘�
 const eyeCropContext = eyeCropCanvas.getContext('2d');
 
 const megabytes = (bytes) => (bytes / 1_000_000).toFixed(1);
+const MODEL_CACHE_NAME = 'moment-select-models-1'; // sw.js의 MODEL_CACHE와 같아야 한다
+const isModelUrl = (url) => /\/vendor\/(face-api\/model|nima|mediapipe)\//.test(url); // sw.js의 isModelFile과 같은 범위
 // 분석 전에 모델 파일을 받는다. "로딩 중"이 아니라 무엇을 위한 모델인지, 얼마나 받았는지 보여준다.
 // 받은 파일은 서비스 워커가 기기에 보관해서 다음부터는 바로 넘어간다.
 async function downloadModels(groups) {
@@ -549,6 +551,9 @@ async function downloadModels(groups) {
   $('#analyze-note').textContent = t('modelNote');
   $('#analyze-note').classList.remove('hidden');
   let lastPaintAt = 0; // 진행 막대를 마지막으로 그린 시각
+  // 첫 방문 직후 서비스 워커가 아직 이 화면을 맡기 전이면, 여기서 받은 모델이 보관되지 않아 모델을 켤 때 또 받는다
+  // (느린 망에서 눈 모델 wasm 13.5MB를 두 번). 그럴 때는 서비스 워커가 쓰는 모델 보관함에 직접 넣어 둔다
+  const modelCache = !navigator.serviceWorker?.controller && 'caches' in window ? await caches.open(MODEL_CACHE_NAME).catch(() => null) : null;
   for (const group of groups) {
     const showProgress = (currentBytes, force = false) => {
       // 조각마다 그리면 막대의 CSS 애니메이션이 계속 처음부터 다시 시작돼 실제보다 뒤처진다. 0.1초에 한 번만 그린다
@@ -561,6 +566,7 @@ async function downloadModels(groups) {
       showProgress(finishedBytes, true);
       const response = await fetch(file.url);
       if (!response.ok) throw new Error(`${file.url} ${response.status}`);
+      const keeping = modelCache && isModelUrl(file.url) ? modelCache.put(new URL(file.url, location.href).href, response.clone()).catch(() => {}) : null;
       if (response.body?.getReader) {
         const reader = response.body.getReader();
         let fileBytes = 0;
@@ -573,6 +579,7 @@ async function downloadModels(groups) {
       } else {
         await response.arrayBuffer();
       }
+      await keeping;
       finishedBytes += file.bytes;
     }
   }
@@ -596,8 +603,17 @@ async function loadLibraries() {
   $('#analyze-title').textContent = t('analyzeTitle');
   $('#analyze-note').classList.add('hidden');
   $('#analyze-meter').style.width = '0%';
+  // 받은 모델을 켜는 데도 느린 폰에서는 30초쯤 걸린다. 한 문구로 멈춰 보이지 않게 무엇을 켜는지 단계마다 알린다
+  const startPurposes = ['modelPurposeFaces', 'modelPurposePeople', 'modelPurposeAesthetic', ...(state.settings.penalizeClosedEyes ? ['modelPurposeEyes'] : [])];
+  const showStartStep = (purposeKey) => {
+    const step = startPurposes.indexOf(purposeKey) + 1;
+    $('#analyze-text').textContent = t('loadingModelStep', { purpose: t(purposeKey), step, total: startPurposes.length });
+    $('#analyze-meter').style.width = `${((step - 1) / startPurposes.length) * 100}%`;
+  };
+  // 눈 감음 정밀 모델은 눈 감은 사진 감점을 켰을 때만. 켜는 데 가장 오래 걸려서(느린 폰에서 15초쯤) 다른 모델과 함께 미리 켠다
+  const eyeLandmarkerStart = state.settings.penalizeClosedEyes ? startEyeLandmarker() : null;
   try {
-    $('#analyze-text').textContent = t('loadingModel');
+    showStartStep('modelPurposeFaces');
     const module = await import(FACE_API_URL);
     // WebGL(그래픽 가속)을 먼저 쓰고, 안 되면 CPU로. wasm 백엔드는 쓰지 않는다
     // 진단용: ?faceF16=1 이면 휴대폰 GPU처럼 16비트 정밀도로 계산하게 해서 문제를 재현한다
@@ -619,12 +635,15 @@ async function loadLibraries() {
   } catch (error) {
     console.warn('face-api load failed', error);
     faceApi = null;
+    eyeLandmarkerStart?.then((task) => task?.close());
     showToast(t('modelFailed'));
     return;
   }
   // 같은 사람 알아보기 모델: 실패해도 나머지 분석은 그대로 한다
+  showStartStep('modelPurposePeople');
   try { await faceApi.nets.faceRecognitionNet.loadFromUri(FACE_MODEL_BASE); } catch (error) { console.warn('face recognition load failed', error); }
   // 미적 점수 모델 (face-api 안의 TensorFlow.js로 돌린다)
+  showStartStep('modelPurposeAesthetic');
   try {
     const [manifest, weightBuffer] = await Promise.all([
       fetch(NIMA_MANIFEST_URL).then((response) => response.json()),
@@ -636,27 +655,31 @@ async function loadLibraries() {
     console.warn('aesthetic model load failed', error);
     aestheticEngine.status = 'failed';
   }
-  // 눈 감음 정밀 모델: 눈 감은 사진 감점을 켰을 때만. 실패하면 face-api 랜드마크로 눈 모양을 본다
-  if (state.settings.penalizeClosedEyes) {
-    try {
-      quietMediaPipeInfoLogs();
-      const { FaceLandmarker } = await import(MEDIAPIPE_URL);
-      eyeLandmarker = await FaceLandmarker.createFromOptions({
-        wasmLoaderPath: new URL(MEDIAPIPE_WASM_LOADER_URL, location.href).href,
-        wasmBinaryPath: new URL(MEDIAPIPE_WASM_BINARY_URL, location.href).href,
-      }, {
-        baseOptions: { modelAssetPath: new URL(FACE_LANDMARKER_URL, location.href).href, delegate: 'CPU' },
-        runningMode: 'IMAGE',
-        numFaces: 1,
-        outputFaceBlendshapes: true,
-      });
-      stopMediaPipeUsageLogging(eyeLandmarker);
-      eyeEngine.status = 'ready';
-    } catch (error) {
-      console.warn('face landmarker load failed', error);
-      eyeLandmarker = null;
-      eyeEngine.status = 'failed';
-    }
+  if (eyeLandmarkerStart) {
+    showStartStep('modelPurposeEyes');
+    eyeLandmarker = await eyeLandmarkerStart;
+    eyeEngine.status = eyeLandmarker ? 'ready' : 'failed';
+  }
+}
+// 눈 감음 정밀 모델(MediaPipe). 실패하면 null을 돌려주고, 그때는 face-api 랜드마크로 눈 모양을 본다
+async function startEyeLandmarker() {
+  try {
+    quietMediaPipeInfoLogs();
+    const { FaceLandmarker } = await import(MEDIAPIPE_URL);
+    const task = await FaceLandmarker.createFromOptions({
+      wasmLoaderPath: new URL(MEDIAPIPE_WASM_LOADER_URL, location.href).href,
+      wasmBinaryPath: new URL(MEDIAPIPE_WASM_BINARY_URL, location.href).href,
+    }, {
+      baseOptions: { modelAssetPath: new URL(FACE_LANDMARKER_URL, location.href).href, delegate: 'CPU' },
+      runningMode: 'IMAGE',
+      numFaces: 1,
+      outputFaceBlendshapes: true,
+    });
+    stopMediaPipeUsageLogging(task);
+    return task;
+  } catch (error) {
+    console.warn('face landmarker load failed', error);
+    return null;
   }
 }
 // MediaPipe(wasm)는 "INFO: Created TensorFlow Lite XNNPACK delegate" 같은 정보 로그도 console.error로 찍는다.
@@ -1071,6 +1094,8 @@ async function analyzeAll() {
   $('#analyze-sheet').innerHTML = '';
   await loadLibraries();
   await crossCheckFaceBackends();
+  $('#analyze-meter').style.width = '0%';
+  if (faceApi) $('#analyze-text').textContent = t('firstPhoto');
   const totalCount = state.photos.length;
   let finishedCount = 0;
   let rateStartedAt = 0; // 남은 시간 계산 기준 (첫 장은 모델 준비 시간이 섞여 있어서 둘째 장부터 잰다)
