@@ -97,7 +97,8 @@ const MESSAGES = {
     // ---------- 분석 ----------
     analyzeTitle: '사진 분석 중',
     skipFaces: '얼굴 분석 끄고 빨리 진행',
-    loadingModel: '받은 모델을 켜는 중이에요.',
+    loadingModelStep: ({ purpose, step, total }) => `${purpose}을 켜는 중이에요 (${step}/${total})`,
+    firstPhoto: '첫 사진을 분석하는 중이에요. 첫 장은 조금 더 걸려요.',
     preparingTitle: '분석 준비',
     modelPurposeFaces: '얼굴과 표정을 찾는 모델',
     modelPurposePeople: '같은 사람을 알아보는 모델(주인공 찾기)',
@@ -326,7 +327,8 @@ const MESSAGES = {
 
     analyzeTitle: 'Analyzing photos',
     skipFaces: 'Skip faces (faster)',
-    loadingModel: 'Warming up…',
+    loadingModelStep: ({ purpose, step, total }) => `Starting the ${purpose} (${step}/${total})…`,
+    firstPhoto: 'Analyzing the first photo. The first one takes a little longer.',
     preparingTitle: 'Getting ready',
     modelPurposeFaces: 'face model',
     modelPurposePeople: 'people model',
