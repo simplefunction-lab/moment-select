@@ -55,6 +55,7 @@
 
   /* ---------- 버튼과 입력 ---------- */
   button { font: inherit; color: inherit; cursor: pointer; }
+  button, input, select, label, summary { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
   .button {
     display: inline-flex; align-items: center; gap: 6px;
     height: 34px; padding: 0 12px; border-radius: var(--radius-m);
@@ -286,6 +287,161 @@
   .update-bar .button.quiet:hover { background: rgba(255, 255, 255, .12); }
   .update-bar .button.close { width: 30px; padding: 0; justify-content: center; font-size: 16px; }
 
+  /* =====================================================================
+     비주얼 레이어
+     - 시작 화면: 조용한 라이트 테이블. 장식 없이 제목, 개인정보 한 줄, 설정 유리 카드, 버튼만
+     - 고르기 화면(immersive): 대담함은 여기 한 곳에만 쓴다. 지금 사진을 크게 흐려 깐 앰비언트 배경 위에
+       유리 조작부를 띄워서, 사진 색이 화면 전체에 번지고 조작부는 사진을 가리지 않는다
+     - 움직임: Open Props의 감속 곡선(--ease-out-*), 300ms 안쪽, transform과 opacity만.
+       스와이프 물리는 app.js에서 Motion으로. 반복 동작에는 튀는(bounce) 곡선을 쓰지 않는다
+     ===================================================================== */
+  :root {
+    --night: #24282A;                                  /* 고르기 화면 바탕 (앰비언트 사진이 뜨기 전, 무대와 같은 숯색) */
+    --glass: rgba(255, 255, 255, .09);                 /* 어두운 배경 위 유리 */
+    --glass-hover: rgba(255, 255, 255, .15);
+    --glass-line: rgba(255, 255, 255, .16);
+    --glass-shine: inset 0 1px 0 rgba(255, 255, 255, .22), inset 0 -1px 0 rgba(255, 255, 255, .04);
+    --glass-blur: blur(22px) saturate(170%);
+    --glass-ink: #F1F3F2;
+    --glass-ink-2: rgba(241, 243, 242, .66);
+    --paper-glass: rgba(255, 255, 255, .62);           /* 밝은 배경 위 유리 */
+    --paper-glass-line: rgba(255, 255, 255, .85);
+    --radius-l: 16px;
+    --radius-xl: 22px;
+    --radius-pill: 999px;
+    --keep-gradient: linear-gradient(180deg, #DE372C 0%, #BC2017 100%);
+    --keep-glow: 0 10px 26px -8px rgba(200, 38, 28, .65);
+  }
+
+  /* ---------- 시작 화면 ---------- */
+  .hero h1 { font-size: clamp(34px, 7.4vw, 58px); line-height: 1.02; font-weight: 760; letter-spacing: -0.045em; }
+  .hero .lede { margin-top: 14px; font-size: 17px; line-height: 1.45; color: var(--ink-2); max-width: 34ch; }
+  .privacy { display: inline-flex; align-items: center; gap: 8px; margin-top: 16px; padding: 8px 14px 8px 11px; border-radius: 14px; /* 좁은 화면에서 두 줄이 돼도 어색하지 않게 알약 대신 둥근 사각형 */
+    background: var(--paper-glass); border: 1px solid var(--paper-glass-line); box-shadow: 0 1px 2px rgba(30, 37, 35, .06), 0 6px 18px -8px rgba(30, 37, 35, .18);
+    -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); font-size: 13px; font-weight: 600; color: var(--ink); }
+  .privacy i.ph { font-size: 16px; color: var(--marker); vertical-align: 0; }
+  /* 사진 종류와 장수: 유리 카드 */
+  .quick { margin-top: 26px; padding: 4px 20px; border-radius: var(--radius-xl); background: var(--paper-glass); border: 1px solid var(--paper-glass-line);
+    -webkit-backdrop-filter: blur(18px) saturate(140%); backdrop-filter: blur(18px) saturate(140%);
+    box-shadow: 0 1px 2px rgba(30, 37, 35, .05), 0 18px 40px -22px rgba(30, 37, 35, .35); }
+  .quick .field { border-bottom: 1px solid rgba(30, 37, 35, .08); }
+  .quick .field:first-of-type { margin-top: 0; border-top: none; }
+  .quick .field:last-child { border-bottom: none; }
+  /* 사진 종류: 알약 모양 칩 */
+  .segmented { border: none; background: transparent; overflow: visible; gap: 8px; }
+  .segmented label { height: 36px; padding: 0 14px; border: 1px solid rgba(30, 37, 35, .14); border-radius: var(--radius-pill); background: rgba(255, 255, 255, .7);
+    transition: background-color .2s var(--ease-out-3, ease-out), color .2s, transform .25s var(--ease-out-4, ease-out); }
+  .segmented label:last-child { border-right: 1px solid rgba(30, 37, 35, .14); }
+  .quick .segmented label { flex: 0 0 auto; } /* 칩은 글자 폭만큼, 넘치면 다음 줄로 (한 칩이 한 줄을 다 차지하지 않게) */
+  .segmented label:hover { background: #fff; }
+  .segmented label:active { transform: scale(.96); }
+  .segmented label:has(input:checked) { background: var(--ink); border-color: var(--ink); color: var(--surface); box-shadow: 0 6px 16px -8px rgba(30, 37, 35, .6); }
+  .quick input[type=number] { border-radius: 12px; background: rgba(255, 255, 255, .8); }
+  /* 사진 고르기 버튼: 펜슬 빨강에 빛 */
+  .start-row .button.primary { height: 54px; padding: 0 22px; border-radius: var(--radius-l); font-size: 16px; font-weight: 650; border: none;
+    background: var(--keep-gradient); box-shadow: var(--keep-glow), inset 0 1px 0 rgba(255, 255, 255, .28);
+    transition: transform .25s var(--ease-out-4, ease-out), box-shadow .2s; }
+  .start-row .button.primary:hover { background: var(--keep-gradient); filter: brightness(1.05); }
+  .start-row .button.primary:active { transform: scale(.97); }
+  .start-row .button:not(.primary) { height: 54px; border-radius: var(--radius-l); padding: 0 20px; background: var(--paper-glass); border-color: rgba(30, 37, 35, .14); font-size: 15px; }
+  .resume { border-radius: var(--radius-l); background: var(--paper-glass); border-color: var(--paper-glass-line); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+  /* 접어 둔 설정 */
+  .more-options { margin-top: 26px; border-top: 1px solid var(--rule); }
+  .more-options summary { display: flex; align-items: center; gap: 8px; padding: 16px 0 6px; cursor: pointer; font-weight: 600; color: var(--ink-2); list-style: none; }
+  .more-options summary::-webkit-details-marker { display: none; }
+  .more-options summary::after { content: ""; width: 7px; height: 7px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg) translateY(-2px); transition: transform .25s var(--ease-out-3, ease-out); }
+  .more-options[open] summary::after { transform: rotate(225deg) translateY(-2px); }
+  .more-options .field:first-of-type { margin-top: 6px; border-top: none; }
+  .more-options .field:last-of-type { border-bottom: none; }
+
+  /* ---------- 분석 화면: 밀착 인화지가 한 장씩 튀어나오며 채워진다 ---------- */
+  .sheet img { border-radius: 6px; animation: pop .45s var(--ease-out-4, ease-out) both; }
+  @keyframes pop { from { opacity: 0; transform: translateY(6px) scale(.86); } }
+  .analyze-meter { height: 4px; border-radius: 4px; overflow: hidden; }
+  .analyze-meter span { background: var(--keep-gradient); }
+
+  /* ---------- 고르기 화면 (immersive) ---------- */
+  #ambient { position: fixed; inset: 0; z-index: 0; display: none; background: var(--night); overflow: hidden; }
+  #ambient .layer { position: absolute; inset: -12%; background-size: cover; background-position: center; opacity: 0;
+    filter: blur(64px) saturate(1.6) brightness(.52); transform: scale(1.08); transition: opacity .7s var(--ease-out-3, ease-out); }
+  #ambient .layer.on { opacity: 1; }
+  /* 가장자리를 어둡게 눌러서 가운데 사진이 떠 보이게 */
+  #ambient::after { content: ""; position: absolute; inset: 0; background: radial-gradient(120% 90% at 50% 45%, transparent 40%, rgba(0, 0, 0, .55) 100%); }
+  .topbar, main, .update-bar { position: relative; z-index: 1; }
+  body.immersive { background: var(--night); color: var(--glass-ink); color-scheme: dark; }
+  body.immersive #ambient { display: block; }
+  body.immersive .topbar { background: rgba(14, 16, 17, .32); border-bottom-color: rgba(255, 255, 255, .07);
+    -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); color: var(--glass-ink); }
+  body.immersive .tabs button { color: var(--glass-ink-2); }
+  body.immersive .tabs button[aria-current="page"] { color: var(--glass-ink); }
+  body.immersive .tabs button[aria-current="page"]::after { background: var(--marker); height: 2.5px; border-radius: 2px; }
+  body.immersive .tabs { border-top-color: rgba(255, 255, 255, .07); }
+  body.immersive .goal-meter { background: rgba(255, 255, 255, .12); }
+  body.immersive .goal-meter span { background: var(--glass-ink); }
+  body.immersive .goal.over .goal-meter span, body.immersive .goal.hit .goal-meter span { background: var(--keep-gradient); }
+  body.immersive select { background: var(--glass); border-color: var(--glass-line); color: var(--glass-ink); }
+  body.immersive select option { color: var(--ink); }
+  body.immersive .toolbar { background: transparent; border-bottom: none; }
+  body.immersive .filters button { color: var(--glass-ink-2); border-radius: var(--radius-pill); height: 30px; padding: 0 12px; }
+  body.immersive .filters button:hover { background: var(--glass); }
+  body.immersive .filters button[aria-pressed="true"] { background: rgba(255, 255, 255, .92); border-color: transparent; color: var(--ink); }
+  body.immersive .notice, body.immersive .toolbar .check { color: var(--glass-ink-2); }
+  body.immersive .notice b { color: var(--glass-ink); }
+  body.immersive .notice.alert b { color: #FF6B5E; }
+  body.immersive .button { background: var(--glass); border-color: var(--glass-line); color: var(--glass-ink); box-shadow: var(--glass-shine);
+    -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
+  body.immersive .button:hover { background: var(--glass-hover); }
+  body.immersive .button.primary, body.immersive .controls .decide.keep { background: var(--keep-gradient); border-color: transparent; color: #fff;
+    box-shadow: var(--keep-glow), inset 0 1px 0 rgba(255, 255, 255, .28); }
+  body.immersive .button.quiet { background: transparent; border-color: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+  body.immersive .button.quiet:hover { background: var(--glass); }
+  body.immersive .stage { background: transparent; }
+  /* 사진 카드: 둥근 모서리와 깊은 그림자. 다음 사진이 뒤에서 살짝 보인다 */
+  .deck { position: relative; display: grid; place-items: center; width: 100%; height: 100%; }
+  .deck > .frame { grid-area: 1 / 1; }
+  .frame .photo { border-radius: 14px; box-shadow: 0 2px 6px rgba(0, 0, 0, .25), 0 28px 60px -12px rgba(0, 0, 0, .6); outline: 1px solid rgba(255, 255, 255, .07); outline-offset: -1px; }
+  .frame.peek { pointer-events: none; transform: translateY(16px) scale(.93); opacity: .55; }
+  .frame.peek .tags, .frame.peek .facebox { display: none; }
+  .tag { border-radius: var(--radius-pill); padding: 4px 10px; background: rgba(14, 16, 17, .46); -webkit-backdrop-filter: blur(12px) saturate(160%); backdrop-filter: blur(12px) saturate(160%);
+    border: 1px solid rgba(255, 255, 255, .1); }
+  .tag.added { background: var(--keep-gradient); border-color: transparent; }
+  /* 조작부: 떠 있는 유리 막대 */
+  body.immersive .controls { margin: 0 12px 8px; padding: 10px; border-radius: var(--radius-xl); background: rgba(255, 255, 255, .07); border: 1px solid var(--glass-line);
+    box-shadow: var(--glass-shine), 0 18px 40px -14px rgba(0, 0, 0, .6); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
+  body.immersive .controls:empty { display: none; }
+  .controls .decide, .controls .icon-only { border-radius: var(--radius-l); transition: transform .3s var(--ease-out-4, ease-out), background-color .15s, box-shadow .2s; }
+  .controls .button:active { transform: scale(.94); }
+  body.immersive .controls kbd { background: transparent; color: var(--glass-ink-2); border-color: rgba(255, 255, 255, .25); }
+  /* 되돌리기: 넓으면 글자를 붙이고, 방금 결정했으면 잠깐 빛난다 */
+  .controls .undo .undo-label { display: none; }
+  .controls .undo.nudge { animation: nudge 1.4s var(--ease-out-3, ease-out); }
+  @keyframes nudge { 0%, 100% { box-shadow: var(--glass-shine); } 18% { box-shadow: var(--glass-shine), 0 0 0 3px rgba(255, 255, 255, .45), 0 0 22px rgba(255, 255, 255, .35); } }
+  @media (min-width: 375px) {
+    .controls .icon-only.undo { width: auto; padding: 0 12px; gap: 6px; flex-shrink: 0; }
+    .controls .undo .undo-label { display: inline; }
+  }
+  body.immersive .filmstrip { background: transparent; padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+  body.immersive .filmstrip button { border-radius: 8px; background: var(--glass); transition: opacity .15s; opacity: .72; }
+  body.immersive .filmstrip button:hover { opacity: 1; }
+  body.immersive .filmstrip button.current { outline: 2px solid var(--marker); outline-offset: 2px; opacity: 1; }
+  body.immersive .filmstrip .more { color: var(--glass-ink-2); }
+  body.immersive .shot { border-radius: 12px; overflow: hidden; background: rgba(0, 0, 0, .25); }
+  body.immersive .shot .index { border-radius: var(--radius-pill); background: rgba(14, 16, 17, .5); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+  body.immersive .empty { padding: 26px 26px 24px; border-radius: var(--radius-xl); background: rgba(14, 16, 17, .38); border: 1px solid var(--glass-line);
+    box-shadow: var(--glass-shine), 0 24px 60px -20px rgba(0, 0, 0, .7); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
+  body.immersive .empty h2 { font-size: 24px; letter-spacing: -0.02em; }
+  /* 점수 기준, 주인공 패널: 어두운 유리 */
+  /* 팝오버는 맨 위 레이어라 Safari가 뒤를 흐리게 그리지 못하고 비쳐 보인다. 흐림 없이 진한 단색으로 */
+  #criteria, #cast { border-radius: var(--radius-xl); background: #1C1F20; color: var(--glass-ink); border: 1px solid var(--glass-line);
+    box-shadow: var(--glass-shine), 0 30px 70px -20px rgba(0, 0, 0, .75); }
+  #criteria .hint, #cast .hint, #cast .cast-face { color: var(--glass-ink-2); }
+  #criteria td { border-bottom-color: rgba(255, 255, 255, .09); }
+  #cast .cast-face[aria-pressed="true"] { color: var(--glass-ink); }
+  /* 알림: 어두운 유리 */
+  .toast { border-radius: var(--radius-l); background: rgba(22, 25, 26, .94); border: 1px solid var(--glass-line); box-shadow: var(--glass-shine), 0 18px 40px -12px rgba(0, 0, 0, .5);
+    -webkit-backdrop-filter: blur(24px) saturate(160%); backdrop-filter: blur(24px) saturate(160%); }
+  #celebrate { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 60; }
+
   /* ---------- 좁은 화면의 상단 바 (휴대폰, 태블릿) ----------
      한 줄에 이름, 단계 탭, 언어, 사람, 남긴 사진이 다 들어가지 않으면 화면이 옆으로 밀린다.
      1100px 이하에서는 남긴 사진 줄과 단계 탭을 각각 다음 줄로 내린다. */
@@ -310,7 +466,12 @@
     .start-row .button { flex: 1 1 100%; justify-content: center; height: 46px; }
     .toolbar { padding: 8px 12px; gap: 8px; }
     .filters { flex-wrap: nowrap; overflow-x: auto; width: 100%; }
-    .filters button { flex-shrink: 0; }
+    .filters button { flex-shrink: 0; position: relative; }
+    .filters button::after { content: ""; position: absolute; inset: -7px -2px; } /* 보이는 칩은 30px, 누르는 영역은 44px */
+    /* iOS는 16px보다 작은 입력칸을 누르면 화면을 확대한다 */
+    input[type=number], input[type=text], select { font-size: 16px; }
+    select { height: 40px; }
+    .tabs { height: 44px; }
     .notice { flex: 1; min-width: 0; }
     .toolbar > .spacer { display: none; }
     #criteria-button, #cast-button { padding: 0 8px; }

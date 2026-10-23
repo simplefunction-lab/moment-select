@@ -20,3 +20,4 @@
 .ph.ph-images::before { content: "\e836"; }
 .ph.ph-share-network::before { content: "\e408"; }
 .ph.ph-arrow-u-up-left::before { content: "\e08a"; }
+.ph.ph-lock-simple::before { content: "\e308"; }
