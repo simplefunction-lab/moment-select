@@ -24,3 +24,4 @@
 .ph.ph-columns::before { content: "\e546"; }
 .ph.ph-minus::before { content: "\e32a"; }
 .ph.ph-plus::before { content: "\e3d4"; }
+.ph.ph-device-rotate::before { content: "\edf2"; }

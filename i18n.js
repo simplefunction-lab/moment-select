@@ -27,6 +27,7 @@ const MESSAGES = {
     goalOver: (count) => `${num(count)}장 많음`,
     reviewerAria: '고르는 사람', languageAria: '언어',
     stepDown: '줄이기', stepUp: '늘리기',
+    rotateHint: '휴대폰을 세로로 돌려 주세요.',
     pickAsOther: (name) => `${name} 차례로 고르기`,
     defaultNameA: '나', defaultNameB: '파트너',
 
@@ -237,6 +238,7 @@ const MESSAGES = {
     goalOver: (count) => `${num(count)} over`,
     reviewerAria: 'Who is picking', languageAria: 'Language',
     stepDown: 'Fewer', stepUp: 'More',
+    rotateHint: 'Turn your phone upright to keep picking.',
     pickAsOther: (name) => `Pick as ${name}`,
     defaultNameA: 'Me', defaultNameB: 'Partner',
 
