@@ -96,7 +96,7 @@ const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시�
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
 const CACHE_VERSION = 'v5';             // 분석 방식이 바뀌면 올린다 (v5: 같은 사람 알아보기, 미적 점수)
-const APP_VERSION = 'v20';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
+const APP_VERSION = 'v21';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
 const ANALYZE_SHEET_MAX = 120;           // 분석 화면에 동시에 보여줄 썸네일 수 (1,000장 넘게 불러와도 화면 요소가 계속 늘지 않게)
 const ETA_WARMUP_PHOTOS = 3;             // 이만큼 분석하기 전에는 남은 시간을 보여주지 않는다 (첫 장은 모델 준비로 느리다)
 const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
@@ -650,6 +650,7 @@ async function loadLibraries() {
         numFaces: 1,
         outputFaceBlendshapes: true,
       });
+      stopMediaPipeUsageLogging(eyeLandmarker);
       eyeEngine.status = 'ready';
     } catch (error) {
       console.warn('face landmarker load failed', error);
@@ -669,6 +670,15 @@ function quietMediaPipeInfoLogs() {
     if (typeof args[0] === 'string' && args[0].startsWith('INFO:')) return;
     consoleError(...args);
   };
+}
+// MediaPipe는 1분마다 사용 통계를 구글(odml.pa.googleapis.com)로 보내려 한다. CSP가 막지만 콘솔 에러가 남고 요청 시도 자체가 앱 약속과 어긋나므로 처음부터 끈다.
+// 공개 옵션이 없어 번들 내부 이름(o: 통계 기록기, m: 전송기)에 기댄다. 버전이 바뀌어 모양이 다르면 아무것도 하지 않는다 (그때도 CSP가 막는다)
+function stopMediaPipeUsageLogging(task) {
+  const sender = task?.o?.m;
+  if (!sender || typeof sender.flush !== 'function' || !Array.isArray(sender.i)) return;
+  sender.error = new Error('usage logging off');
+  sender.i.length = 0;
+  if (sender.h !== undefined) { clearInterval(sender.h); sender.h = undefined; }
 }
 // 미적 점수를 지금 낼 수 있는지: 그래픽 가속(WebGL)이 없으면 장당 1~2초라 건너뛴다
 const canScoreAesthetic = () => Boolean(aestheticModel && faceApi && faceApi.tf.getBackend() === 'webgl');
