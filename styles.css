@@ -153,8 +153,11 @@
   /* 사진 비율을 지키면서 무대 안에 꽉 차게: 가로와 세로 중 먼저 닿는 쪽에 맞춘다 */
   .frame { position: relative; width: min(100cqw, 100cqh * var(--ratio, 1.5)); aspect-ratio: var(--ratio, 1.5); touch-action: none; user-select: none; }
   .frame .photo { position: absolute; inset: 0; overflow: hidden; border-radius: 2px; box-shadow: 0 10px 30px rgba(0, 0, 0, .35); background: #24282A; }
-  .frame .photo img { width: 100%; height: 100%; object-fit: contain; display: block; pointer-events: none; transition: transform .18s var(--ease-out); }
-  .frame.zoomed .photo img { cursor: zoom-out; }
+  .frame .photo img { width: 100%; height: 100%; object-fit: contain; display: block; pointer-events: none; will-change: transform; }
+  /* 확대된 동안: 끌어서 이동, 얼굴 상자는 위치가 맞지 않으니 숨긴다 */
+  .frame.zoomed { cursor: grab; }
+  .frame.zoomed:active { cursor: grabbing; }
+  .frame.zoomed .facebox { display: none; }
   .frame.dragging { transition: none; }
   .frame.settle { transition: transform .2s var(--ease-out); }
   .frame.leave { transition: transform .26s cubic-bezier(.5, 0, .75, 0), opacity .26s; }
@@ -567,12 +570,23 @@
     .filmstrip { min-height: 54px; padding: 6px 12px; }
     .filmstrip button { width: 58px; height: 40px; }
     .burst-head .hint { display: none; }
-    .burst-grid { padding: 8px; gap: 8px; }
+    /* 작은 화면에서도 묶음의 사진이 스크롤 없이 다 보이게 칸의 최소 높이를 낮춘다 (180px이면 360px 폭 휴대폰에서 두 번째 사진이 잘린다) */
+    .burst-grid { padding: 8px; gap: 8px; grid-auto-rows: max(120px, calc((100% - (var(--rows, 2) - 1) * 8px) / var(--rows, 2))); }
     .compare { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; padding: 0; }
     .controls .label-long { display: none; }
     .controls .label-short { display: inline; }
     .export { padding: 24px 16px 60px; }
     .contact { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); }
+  }
+  /* ---------- 가로로 눕힌 휴대폰 ----------
+     휴대폰은 세로로만 쓴다. 웹페이지는 화면 방향을 잠글 수 없어서(iOS Safari는 지원하지 않는다)
+     가로로 돌리면 앱을 가리고 세로로 돌려 달라고 안내한다. 설치한 앱은 manifest의 orientation으로 고정된다 */
+  #rotate-hint { display: none; }
+  @media (orientation: landscape) and (max-height: 500px) and (pointer: coarse) {
+    #rotate-hint { position: fixed; inset: 0; z-index: 100; display: grid; place-content: center; justify-items: center; gap: 14px; padding: 24px;
+      background: var(--night); color: var(--glass-ink); text-align: center; font-size: 17px; font-weight: 600; }
+    #rotate-hint i.ph { font-size: 44px; color: var(--glass-ink-2); vertical-align: 0; }
+    body > :not(#rotate-hint) { visibility: hidden; }
   }
   /* 휴대폰 알림: 위쪽 진행 막대를 가리지 않게 화면 아래쪽, 고르는 중이면 조작부 위에 */
   @media (max-width: 760px) {

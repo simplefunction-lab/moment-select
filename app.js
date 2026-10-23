@@ -92,7 +92,7 @@ const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시�
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
 const CACHE_VERSION = 'v5';             // 분석 방식이 바뀌면 올린다 (v5: 같은 사람 알아보기, 미적 점수)
-const APP_VERSION = 'v14';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
+const APP_VERSION = 'v15';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
 const ANALYZE_SHEET_MAX = 120;           // 분석 화면에 동시에 보여줄 썸네일 수 (1,000장 넘게 불러와도 화면 요소가 계속 늘지 않게)
 const ETA_WARMUP_PHOTOS = 3;             // 이만큼 분석하기 전에는 남은 시간을 보여주지 않는다 (첫 장은 모델 준비로 느리다)
 const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
@@ -1958,22 +1958,15 @@ function renderSingle(stage, photo, preloadIds, stageName) {
     state.priorityIds = [];
     render();
   };
-  attachSwipe(frame, keepMark, dropMark, decide, peek);
+  const zoom = createZoom(frame, image);
+  attachSwipe(frame, keepMark, dropMark, decide, peek, zoom);
 
-  let zoomed = false;
+  // 확대 버튼과 Space: 가장 큰 얼굴을 3배로 (다시 누르면 원래대로)
   const largestFace = [...mainFacesOf(photo)].sort((left, right) => right.box.h - left.box.h)[0];
   const toggleZoom = () => {
-    zoomed = !zoomed;
-    frame.classList.toggle('zoomed', zoomed);
-    image.style.transformOrigin = largestFace ? `${(largestFace.box.x + largestFace.box.w / 2) * 100}% ${(largestFace.box.y + largestFace.box.h / 2) * 100}%` : '50% 50%';
-    image.style.transform = zoomed ? 'scale(3)' : '';
+    if (zoom.scale > 1) { zoom.reset(); return; }
+    zoom.zoomTo(FACE_ZOOM, largestFace ? largestFace.box.x + largestFace.box.w / 2 : 0.5, largestFace ? largestFace.box.y + largestFace.box.h / 2 : 0.5);
   };
-  frame.addEventListener('mousemove', (event) => {
-    if (!zoomed) return;
-    const rect = frame.getBoundingClientRect();
-    image.style.transformOrigin = `${((event.clientX - rect.left) / rect.width) * 100}% ${((event.clientY - rect.top) / rect.height) * 100}%`;
-  });
-  frame.addEventListener('dblclick', toggleZoom);
 
   $('#controls').innerHTML = `
     <button class="button decide" id="act-drop"><i class="ph ph-x"></i>${t('drop')}<kbd>←</kbd></button>
@@ -2015,22 +2008,105 @@ function leaveFrame(frame, mark, status, onDone, { peek = null, nextId = null, f
   setTimeout(() => onDone(status), fromX ? SWIPE_LEAVE_MS - 120 : SWIPE_LEAVE_MS);
 }
 
-// 손가락으로 끌기: 놓을 때 충분히 멀리 갔거나 빠르게 튕겼으면 결정, 아니면 스프링으로 제자리
+// ---------- 사진 확대 ----------
+// 두 손가락으로 벌리고 오므리기, 확대된 동안 한 손가락(마우스)으로 끌어 이동, 두 번 탭(더블클릭)으로 확대/원래대로,
+// 트랙패드 핀치(ctrl + 휠)로도 확대한다. 확대된 동안에는 스와이프로 결정하지 않는다.
+// 사진 카드는 사진 비율 그대로라 img 상자가 카드와 같아서, 카드 좌표로 계산하면 된다.
+const ZOOM_MAX = 4;          // 최대 배율
+const ZOOM_DOUBLE_TAP = 2.5; // 두 번 탭했을 때 배율
+const FACE_ZOOM = 3;         // 확대 버튼, Space: 가장 큰 얼굴을 이 배율로
+function createZoom(frame, image) {
+  let scale = 1, x = 0, y = 0;
+  const apply = (animated) => {
+    image.style.transition = animated && !reducedMotion.matches ? 'transform .22s var(--ease-out-4, ease-out)' : 'none';
+    image.style.transformOrigin = '0 0';
+    image.style.transform = scale > 1 ? `translate(${x}px, ${y}px) scale(${scale})` : '';
+    frame.classList.toggle('zoomed', scale > 1);
+  };
+  // 사진 가장자리가 카드 안쪽으로 들어오지 않게 이동 범위를 막는다
+  const clamp = () => {
+    const width = frame.clientWidth, height = frame.clientHeight;
+    x = Math.min(0, Math.max(width - width * scale, x));
+    y = Math.min(0, Math.max(height - height * scale, y));
+  };
+  return {
+    get scale() { return scale; },
+    // 카드 위의 한 점(px, py)을 손가락 아래 그대로 둔 채 배율을 바꾼다
+    zoomAt(next, px, py, animated = false) {
+      next = Math.min(ZOOM_MAX, Math.max(1, next));
+      x = px - ((px - x) * next) / scale;
+      y = py - ((py - y) * next) / scale;
+      scale = next;
+      if (scale < 1.02) { scale = 1; x = 0; y = 0; }
+      clamp(); apply(animated);
+    },
+    // 사진의 한 점(0~1 비율)을 카드 가운데로 가져오며 확대
+    zoomTo(next, fx, fy) {
+      scale = next;
+      x = frame.clientWidth / 2 - fx * frame.clientWidth * scale;
+      y = frame.clientHeight / 2 - fy * frame.clientHeight * scale;
+      clamp(); apply(true);
+    },
+    panBy(dx, dy) { if (scale === 1) return; x += dx; y += dy; clamp(); apply(false); },
+    reset(animated = true) { scale = 1; x = 0; y = 0; apply(animated); },
+  };
+}
+
+// 손가락으로 끌기: 놓을 때 충분히 멀리 갔거나 빠르게 튕겼으면 결정, 아니면 스프링으로 제자리.
+// 손가락 두 개면 확대, 확대된 상태에서 한 손가락이면 사진 이동
 const SWIPE_DISTANCE = 120;      // 이만큼(px) 끌면 결정
 const SWIPE_FLICK_SPEED = 0.6;   // 이보다 빠르게(px/ms) 튕기면 짧게 끌어도 결정
-function attachSwipe(frame, keepMark, dropMark, onDecide, peek = null) {
+const DOUBLE_TAP_MS = 300;       // 두 번 탭으로 볼 간격
+const TAP_SLOP = 10;             // 이만큼(px) 안에서 떼면 끌기가 아니라 탭
+function attachSwipe(frame, keepMark, dropMark, onDecide, peek = null, zoom = null) {
   let startX = 0, deltaX = 0, dragging = false, lastX = 0, lastTime = 0, velocity = 0;
+  const pointers = new Map(); // 지금 화면에 닿아 있는 손가락 {x, y}
+  let pinch = null;           // 두 손가락 확대 중 {distance, scale, midX, midY}
+  let pan = null;             // 확대된 사진을 끄는 중 {x, y}
+  let press = null;           // 탭 판정용 {x, y, time}
+  let lastTap = null;         // 두 번 탭 판정용 {x, y, time}
+  const local = (point) => { const rect = frame.getBoundingClientRect(); return { x: point.x - rect.left, y: point.y - rect.top }; };
+  const twoFingers = () => { const [first, second] = [...pointers.values()]; return { distance: Math.hypot(first.x - second.x, first.y - second.y) || 1, midX: (first.x + second.x) / 2, midY: (first.y + second.y) / 2 }; };
+  const cancelSwipe = () => {
+    if (!dragging) return;
+    dragging = false;
+    frame.style.transform = '';
+    if (peek) peek.style.transform = '';
+    keepMark.style.opacity = ''; dropMark.style.opacity = '';
+  };
   frame.addEventListener('pointerdown', (event) => {
-    if (frame.classList.contains('zoomed') || event.button !== 0 || frame.dataset.leaving) return;
-    dragging = true; startX = lastX = event.clientX; deltaX = 0; velocity = 0; lastTime = performance.now();
+    if (event.button !== 0 || frame.dataset.leaving) return;
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
     frame.setPointerCapture(event.pointerId);
+    if (zoom && pointers.size === 2) {
+      cancelSwipe(); pan = null; press = null;
+      const fingers = twoFingers();
+      pinch = { distance: fingers.distance, scale: zoom.scale, midX: fingers.midX, midY: fingers.midY };
+      return;
+    }
+    if (pointers.size > 1) return;
+    press = { x: event.clientX, y: event.clientY, time: performance.now() };
+    if (zoom && zoom.scale > 1) { pan = { x: event.clientX, y: event.clientY }; return; }
+    dragging = true; startX = lastX = event.clientX; deltaX = 0; velocity = 0; lastTime = performance.now();
   });
   frame.addEventListener('pointermove', (event) => {
+    if (!pointers.has(event.pointerId)) return;
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (pinch && pointers.size === 2) {
+      const fingers = twoFingers();
+      const mid = local({ x: fingers.midX, y: fingers.midY });
+      zoom.zoomAt(pinch.scale * (fingers.distance / pinch.distance), mid.x, mid.y);
+      zoom.panBy(fingers.midX - pinch.midX, fingers.midY - pinch.midY); // 두 손가락을 함께 움직이면 사진도 따라간다
+      pinch.scale = zoom.scale; pinch.distance = fingers.distance; pinch.midX = fingers.midX; pinch.midY = fingers.midY;
+      return;
+    }
+    if (pan) { zoom.panBy(event.clientX - pan.x, event.clientY - pan.y); pan = { x: event.clientX, y: event.clientY }; return; }
     if (!dragging) return;
     const now = performance.now();
     velocity = (event.clientX - lastX) / Math.max(1, now - lastTime);
     lastX = event.clientX; lastTime = now;
     deltaX = event.clientX - startX;
+    if (Math.abs(deltaX) > TAP_SLOP) press = null;
     frame.style.transform = `translateX(${deltaX}px) rotate(${deltaX / 40}deg)`;
     keepMark.style.opacity = clamp01(deltaX / 140);
     dropMark.style.opacity = clamp01(-deltaX / 140);
@@ -2040,6 +2116,40 @@ function attachSwipe(frame, keepMark, dropMark, onDecide, peek = null) {
       peek.style.transform = `translateY(${16 - progress * 8}px) scale(${0.93 + progress * 0.03})`;
     }
   });
+  // 두 번 탭: 원래 크기면 탭한 곳을 확대, 확대돼 있으면 원래대로
+  const handleTap = (event) => {
+    const now = performance.now();
+    if (lastTap && now - lastTap.time < DOUBLE_TAP_MS && Math.hypot(event.clientX - lastTap.x, event.clientY - lastTap.y) < 30) {
+      lastTap = null;
+      if (zoom.scale > 1) zoom.reset();
+      else { const point = local({ x: event.clientX, y: event.clientY }); zoom.zoomAt(ZOOM_DOUBLE_TAP, point.x, point.y, true); }
+      return true;
+    }
+    lastTap = { x: event.clientX, y: event.clientY, time: now };
+    return false;
+  };
+  const release = (event) => {
+    if (!pointers.has(event.pointerId)) return;
+    pointers.delete(event.pointerId);
+    if (pinch) {
+      if (pointers.size < 2) pinch = null;
+      // 남은 한 손가락으로 이어서 이동 (확대돼 있을 때)
+      if (pointers.size === 1 && zoom.scale > 1) { const [rest] = pointers.values(); pan = { x: rest.x, y: rest.y }; }
+      return;
+    }
+    const tapped = press && event.type === 'pointerup' && Math.hypot(event.clientX - press.x, event.clientY - press.y) < TAP_SLOP && performance.now() - press.time < 300;
+    press = null;
+    if (pan) { pan = null; if (tapped && zoom) handleTap(event); return; }
+    if (tapped && zoom && handleTap(event)) { cancelSwipe(); return; }
+    finish();
+  };
+  // 트랙패드 핀치(브라우저가 ctrl + 휠로 보낸다)
+  if (zoom) frame.addEventListener('wheel', (event) => {
+    if (!event.ctrlKey) return;
+    event.preventDefault();
+    const point = local({ x: event.clientX, y: event.clientY });
+    zoom.zoomAt(zoom.scale * Math.exp(-event.deltaY / 100), point.x, point.y);
+  }, { passive: false });
   const finish = () => {
     if (!dragging) return;
     dragging = false;
@@ -2053,8 +2163,8 @@ function attachSwipe(frame, keepMark, dropMark, onDecide, peek = null) {
     if (peek) motion(peek, { transform: [peek.style.transform || 'translateY(16px) scale(.93)', 'translateY(16px) scale(.93)'] }, { duration: 0.2, ease: [0.16, 1, 0.3, 1] });
     keepMark.style.opacity = ''; dropMark.style.opacity = '';
   };
-  frame.addEventListener('pointerup', finish);
-  frame.addEventListener('pointercancel', finish);
+  frame.addEventListener('pointerup', release);
+  frame.addEventListener('pointercancel', release);
 }
 
 // ---------- 비슷한 컷 묶음 ----------
