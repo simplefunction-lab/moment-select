@@ -454,6 +454,8 @@
   body.immersive .reviewer-toggle button { color: var(--glass-ink-2); }
   body.immersive .reviewer-toggle button[aria-checked="true"] { background: rgba(255, 255, 255, .92); color: var(--ink); }
   /* 언어 전환: 시작 화면 맨 아래 작은 글자 두 개 */
+  .feedback-link { display: inline-block; margin-top: 28px; padding: 6px 0; color: var(--ink-2); font-weight: 600; }
+  .feedback-link + .lang-switch { margin-top: 8px; }
   .lang-switch { display: flex; gap: 4px; margin-top: 28px; }
   .lang-switch button { height: 32px; padding: 0 10px; border: none; border-radius: var(--radius-pill); background: transparent; color: var(--ink-2); font-size: 13px; font-weight: 550; }
   .lang-switch button:hover { color: var(--ink); background: rgba(30, 37, 35, .06); }

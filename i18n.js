@@ -61,7 +61,9 @@ const MESSAGES = {
     pickAsOther: (name) => `${name} 차례로 고르기`,
     supportTitle: '모먼트 셀렉이 도움이 됐나요?', supportBody: '무료이고 광고도 추적도 없어요. 저녁 시간을 아껴 드렸다면 커피 한 잔으로 응원해 주세요.', supportCoffee: '커피 사 주기',
     supportAppTitle: '다음은 아이폰 앱', supportAppBody: '고른 사진을 복사본 없이 사진 보관함의 앨범으로 정리해요.', supportNotify: '출시 알림 받기',
-    supportNote: '두 링크 모두 새 탭으로 열려요. 사진에 관한 정보는 아무것도 보내지 않아요.', supportHide: '숨기기',
+    supportNote: '링크는 새 탭으로 열려요. 사진에 관한 정보는 보내지 않고, 의견 폼에는 앱 판 번호와 기기 종류만 함께 가요.', supportHide: '숨기기',
+    supportFeedbackTitle: '써 보니 어땠나요?', supportFeedbackBody: '1분이면 되는 짧은 설문이에요(영어). 막힌 곳이나 바꾸고 싶은 점을 알려 주세요.', supportFeedback: '의견 보내기',
+    feedbackLink: '써 보셨나요? 어땠는지 알려 주세요',
     defaultNameA: '나', defaultNameB: '파트너',
 
     // ---------- 시작 화면 ----------
@@ -313,7 +315,9 @@ const MESSAGES = {
     pickAsOther: (name) => `Pick as ${name}`,
     supportTitle: 'Enjoying Moment Select?', supportBody: 'It’s free, with no ads and no tracking. If it saved you an evening, you can buy me a coffee.', supportCoffee: 'Buy me a coffee',
     supportAppTitle: 'iPhone app, coming next', supportAppBody: 'Sort your picks into an album in your photo library, with no duplicate copies.', supportNotify: 'Get notified',
-    supportNote: 'Both links open in a new tab. Nothing about your photos is sent.', supportHide: 'Hide',
+    supportNote: 'Links open in a new tab. Nothing about your photos is sent; the feedback form only gets the app version and device type.', supportHide: 'Hide',
+    supportFeedbackTitle: 'How did it go?', supportFeedbackBody: 'A one-minute form. Tell us where you got stuck or what you’d change.', supportFeedback: 'Send feedback',
+    feedbackLink: 'Tried it? Tell us how it went',
     defaultNameA: 'Me', defaultNameB: 'Partner',
 
     setupTitle: 'Pick the photos to keep',
