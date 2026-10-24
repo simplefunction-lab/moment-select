@@ -115,8 +115,10 @@ const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시�
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
 const CACHE_VERSION = 'v5';             // 분석 방식이 바뀌면 올린다 (v5: 같은 사람 알아보기, 미적 점수)
-const APP_VERSION = 'v31';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
-const ANALYZE_SHEET_MAX = 120;           // 분석 화면에 동시에 보여줄 썸네일 수 (1,000장 넘게 불러와도 화면 요소가 계속 늘지 않게)
+const APP_VERSION = 'v32';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
+const ANALYZE_SHEET_MAX = 8;             // 분석 화면 한 줄에 보여줄 최근 썸네일 수 (요소와 메모리가 늘지 않게)
+const ANALYZE_SHEET_EVERY_MS = 250;      // 썸네일 줄은 이 간격보다 자주 바꾸지 않는다 (빠르게 분석될 때 화면 일을 줄인다)
+const DECODE_AHEAD = isTouchDevice ? 1 : 2;  // 분석하는 동안 미리 풀어 둘 다음 사진 수 (휴대폰은 메모리 때문에 1장)
 const ETA_WARMUP_PHOTOS = 3;             // 이만큼 분석하기 전에는 남은 시간을 보여주지 않는다 (첫 장은 모델 준비로 느리다)
 const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
 const DARK_RETRY_LUMINANCE = 100;        // 평균 밝기가 이보다 어두운데 얼굴을 못 찾으면 밝게 보정해서 한 번 더 찾는다
@@ -224,9 +226,7 @@ function showToast(html, actions = [], durationMs = 4000) {
 }
 
 function cloneMark(kind) {
-  const mark = $(kind === 'keep' ? '#mark-template' : '#cross-template').content.firstElementChild.cloneNode(true);
-  $('.word', mark).textContent = t(kind === 'keep' ? 'markKeep' : 'markDrop'); // 템플릿 안은 자동 번역이 안 되니 직접 넣는다
-  return mark;
+  return $(kind === 'keep' ? '#mark-template' : '#cross-template').content.firstElementChild.cloneNode(true);
 }
 
 /* =====================================================================
@@ -1147,11 +1147,43 @@ async function faceDescriptors(sourceCanvas, detections, imageHeight) {
   return result;
 }
 
-async function analyzeOne(photo) {
+// 디코딩 워커: 원본 디코딩과 분석용·썸네일 축소를 메인 스레드 밖에서 한다 (지원하지 않는 브라우저는 메인 스레드에서)
+const decodeWorkers = [];
+const decodeJobs = new Map(); // 작업 번호에서 {resolve, reject}로
+let decodeJobId = 0;
+function decodeInWorker(file) {
+  if (!decodeWorkers.length) {
+    if (typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined' || !('convertToBlob' in OffscreenCanvas.prototype)) return null;
+    for (let index = 0; index < DECODE_AHEAD + 1; index++) {
+      const worker = new Worker('./decode-worker.js');
+      worker.onmessage = ({ data }) => {
+        const job = decodeJobs.get(data.id);
+        decodeJobs.delete(data.id);
+        if (data.error) job.reject(new Error(data.error)); else job.resolve(data);
+      };
+      decodeWorkers.push(worker);
+    }
+  }
+  const id = ++decodeJobId;
+  return new Promise((resolve, reject) => {
+    decodeJobs.set(id, { resolve, reject });
+    decodeWorkers[id % decodeWorkers.length].postMessage({ id, file, analysisLongSide: ANALYSIS_LONG_SIDE, thumbLongSide: THUMB_LONG_SIDE });
+  });
+}
+
+// 사진 한 장의 파일, 저장된 분석 결과, (없으면) 원본 디코딩을 준비한다.
+// 분석하는 동안 다음 사진의 이 준비를 미리 시작해 두면, 디코딩이 얼굴 모델 계산과 겹쳐서 기다리는 시간이 줄어든다
+async function preparePhoto(photo) {
   const file = await getPhotoFile(photo);
   // 얼굴 분석, 미적 점수, 눈 감음 정밀 모델을 썼는지에 따라 따로 보관한다 (나중에 더 할 수 있게 되면 다시 분석)
   const cacheKey = `cache:${CACHE_VERSION}:${photo.relPath}|${file.size}|${file.lastModified}|${faceApi ? 'face' : 'basic'}${canScoreAesthetic() ? '+aesthetic' : ''}${eyeLandmarker ? '+eyes' : ''}`;
   const cached = await dbGet(cacheKey);
+  if (cached) return { file, cacheKey, cached };
+  return { file, cacheKey, decoded: decodeInWorker(file) ?? createImageBitmap(file, { imageOrientation: 'from-image' }) };
+}
+
+async function analyzeOne(photo, prepared = preparePhoto(photo)) {
+  const { file, cacheKey, cached, decoded } = await prepared;
   if (cached) {
     Object.assign(photo, { takenAt: cached.takenAt, width: cached.width, height: cached.height, analysis: cached.analysis });
     photo.thumbUrl = URL.createObjectURL(cached.thumbBlob);
@@ -1167,12 +1199,24 @@ async function analyzeOne(photo) {
       takenAt = date instanceof Date && !isNaN(date) ? date.getTime() : null;
     } catch { takenAt = null; }
   }
-  const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
-  photo.width = bitmap.width; photo.height = bitmap.height;
-  drawScaled(bitmap, THUMB_LONG_SIDE, thumbCanvas, thumbContext);
-  const thumbBlob = await new Promise((resolve) => thumbCanvas.toBlob(resolve, 'image/jpeg', 0.82));
-  drawScaled(bitmap, ANALYSIS_LONG_SIDE, analysisCanvas, analysisContext);
-  bitmap.close();
+  const result = await decoded;
+  let thumbBlob;
+  if (result.analysisBitmap) {
+    // 워커가 줄여 온 분석용 그림을 그대로(1:1) 옮긴다
+    photo.width = result.width; photo.height = result.height;
+    analysisCanvas.width = result.analysisBitmap.width; analysisCanvas.height = result.analysisBitmap.height;
+    analysisContext.drawImage(result.analysisBitmap, 0, 0);
+    result.analysisBitmap.close();
+    thumbBlob = result.thumbBlob;
+  } else {
+    const bitmap = result;
+    photo.width = bitmap.width; photo.height = bitmap.height;
+    drawScaled(bitmap, ANALYSIS_LONG_SIDE, analysisCanvas, analysisContext);
+    bitmap.close();
+    // 썸네일(화면 표시용)은 원본 대신 이미 줄인 분석용 그림에서 만든다. 큰 원본을 한 번 더 그리지 않아도 된다
+    drawScaled(analysisCanvas, THUMB_LONG_SIDE, thumbCanvas, thumbContext);
+    thumbBlob = await new Promise((resolve) => thumbCanvas.toBlob(resolve, 'image/jpeg', 0.82));
+  }
 
   const { width, height } = analysisCanvas;
   const gray = toGrayscale(analysisContext, width, height);
@@ -1246,9 +1290,22 @@ async function analyzeAll() {
   const totalCount = state.photos.length;
   let finishedCount = 0;
   let rateStartedAt = 0; // 남은 시간 계산 기준 (첫 장은 모델 준비 시간이 섞여 있어서 둘째 장부터 잰다)
-  for (const photo of state.photos) {
+  let sheetUpdatedAt = 0;
+  // 다음 사진 몇 장의 디코딩을 미리 시작한다 (브라우저가 별도 스레드에서 푼다). 원본 비트맵은 장당 100MB 가까이 되니 몇 장만
+  const prepared = new Map();
+  const prepareAhead = (index) => {
+    const photo = state.photos[index];
+    if (!photo || prepared.has(photo)) return;
+    const promise = preparePhoto(photo);
+    promise.catch(() => {}); // 실패는 그 사진을 분석할 때 처리한다
+    prepared.set(photo, promise);
+  };
+  for (const [index, photo] of state.photos.entries()) {
+    for (let ahead = 0; ahead <= DECODE_AHEAD; ahead++) prepareAhead(index + ahead);
+    const preparedPhoto = prepared.get(photo);
+    prepared.delete(photo);
     try {
-      await analyzeOne(photo);
+      await analyzeOne(photo, preparedPhoto);
     } catch (error) {
       console.warn('analyze failed', photo.relPath, error);
       photo.analysis = { focusSharpness: 0, noise: 0, light: { mean: 128, brightClip: 0, darkClip: 0 }, hash: [0, 0], faces: null, failed: true };
@@ -1259,9 +1316,10 @@ async function analyzeAll() {
       : Math.round(((performance.now() - rateStartedAt) / 1000 / (finishedCount - 1)) * (totalCount - finishedCount));
     $('#analyze-meter').style.width = `${(finishedCount / totalCount) * 100}%`;
     $('#analyze-text').textContent = t('analyzeProgress', { done: finishedCount, total: totalCount, seconds: remainingSeconds, faceOff: !faceApi });
-    if (photo.thumbUrl) {
+    if (photo.thumbUrl && performance.now() - sheetUpdatedAt >= ANALYZE_SHEET_EVERY_MS) {
+      sheetUpdatedAt = performance.now();
       const sheet = $('#analyze-sheet');
-      sheet.insertAdjacentHTML('beforeend', `<img src="${photo.thumbUrl}" alt="">`);
+      sheet.insertAdjacentHTML('beforeend', `<img src="${photo.thumbUrl}" alt="" decoding="async">`);
       if (sheet.childElementCount > ANALYZE_SHEET_MAX) sheet.firstElementChild.remove();
     }
   }
@@ -1670,11 +1728,14 @@ function buildUnits() {
   const units = [];
   const seenGroups = new Set();
   for (const photo of state.photos) {
-    if (photo.groupId && !state.expandedGroups.has(photo.groupId)) {
+    if (photo.groupId) {
       if (seenGroups.has(photo.groupId)) continue;
       seenGroups.add(photo.groupId);
       const memberIds = state.groups.get(photo.groupId);
-      units.push({ key: photo.groupId, type: 'group', ids: memberIds, score: Math.max(...memberIds.map((id) => state.photoById.get(id).score)) });
+      const score = Math.max(...memberIds.map((id) => state.photoById.get(id).score));
+      // '한 장씩 보기'로 푼 묶음도 한 단위로 둔다. 묶음 사진이 전체 사진 사이에 흩어지지 않고 점수 순서대로 차례로 나온다
+      if (state.expandedGroups.has(photo.groupId)) units.push({ key: photo.groupId, type: 'expanded', ids: [...memberIds].sort((left, right) => state.photoById.get(right).score - state.photoById.get(left).score), score });
+      else units.push({ key: photo.groupId, type: 'group', ids: memberIds, score });
     } else {
       units.push({ key: photo.id, type: 'single', ids: [photo.id], score: photo.score });
     }
@@ -2046,10 +2107,13 @@ function renderPickView() {
     }
     if (head.type === 'divider') return renderDivider(stage, head);
     if (head.type === 'group') return renderBurst(stage, head);
+    if (head.type === 'expanded') return renderExpanded(stage, head, queue);
     const headPhoto = state.photoById.get(head.ids[0]);
-    const firstKeptLookalikes = singleViewIds.has(headPhoto.id) ? [] : similarKeptPhotos(headPhoto);
-    if (firstKeptLookalikes.length) return renderKeptCompare(stage, headPhoto, firstKeptLookalikes, 'first');
-    return renderSingle(stage, headPhoto, queue.slice(1).flatMap((unit) => unit.ids).slice(0, 2), 'first');
+    const firstKeptLookalikes = similarKeptPhotos(headPhoto);
+    if (firstKeptLookalikes.length && !singleViewIds.has(headPhoto.id)) return renderKeptCompare(stage, headPhoto, firstKeptLookalikes, 'first');
+    renderSingle(stage, headPhoto, queue.slice(1).flatMap((unit) => unit.ids).slice(0, 2), 'first');
+    if (firstKeptLookalikes.length) addCompareBackBar(stage, headPhoto);
+    return;
   }
 
   if (mode === 'distill') {
@@ -2084,9 +2148,10 @@ function renderPickView() {
       [{ label: t('btnRescueAgain'), run: () => { state.rounds[state.currentReviewer].rescue = []; saveProjectSoon(); render(); } },
        { label: keepCount > target ? t('btnDistill') : t('btnExport'), primary: true, run: () => setView(keepCount > target ? 'distill' : 'export') }]);
   }
-  const rescueKeptLookalikes = singleViewIds.has(head.id) ? [] : similarKeptPhotos(head);
-  if (rescueKeptLookalikes.length) return renderKeptCompare(stage, head, rescueKeptLookalikes, 'rescue');
-  return renderSingle(stage, head, queue.slice(1, 3).map((photo) => photo.id), 'rescue');
+  const rescueKeptLookalikes = similarKeptPhotos(head);
+  if (rescueKeptLookalikes.length && !singleViewIds.has(head.id)) return renderKeptCompare(stage, head, rescueKeptLookalikes, 'rescue');
+  renderSingle(stage, head, queue.slice(1, 3).map((photo) => photo.id), 'rescue');
+  if (rescueKeptLookalikes.length) addCompareBackBar(stage, head);
 }
 
 // container queries가 없으면 카드(사진 비율 그대로)를 무대 안에 들어가는 가장 큰 크기로 직접 맞춘다
@@ -2236,6 +2301,57 @@ function renderSingle(stage, photo, preloadIds, stageName) {
   $('#act-zoom').onclick = toggleZoom;
   $('#act-faces').onclick = () => frame.classList.toggle('show-faces');
   currentKeys = { left: () => leave('drop'), right: () => leave('keep'), zoom: toggleZoom, faces: () => frame.classList.toggle('show-faces') };
+}
+
+// '한 장만 보기'를 고른 사진 위에 '비교로 보기' 줄을 둔다 (남긴 비슷한 컷과 나란히 보는 화면으로 돌아가기)
+function addCompareBackBar(stage, photo) {
+  stage.insertAdjacentHTML('afterbegin', `
+    <div class="burst-bar">
+      <span class="hint">${t('keptSingleNote')}</span>
+      <span class="spacer"></span>
+      <button class="button" id="kept-compare-back">${t('keptCompareBack')}</button>
+    </div>`);
+  $('#kept-compare-back').onclick = () => { singleViewIds.delete(photo.id); render(); };
+}
+
+// ---------- 한 장씩 보기로 푼 연사 묶음 ----------
+// 묶음 사진을 점수 높은 순으로 한 장씩. 남기기·빼기를 하면 묶음 안 다음 장, ‹ ›는 결정 없이 이전·다음 장, '모아서 보기'는 묶음 화면으로
+let expandedCursor = { key: null, id: null, browsedAt: 0 };
+function renderExpanded(stage, unit, queue) {
+  const members = unit.ids;
+  const prioritized = members.find((id) => state.priorityIds.includes(id)); // 되돌리기나 필름 띠로 고른 사진
+  if (prioritized) expandedCursor = { key: unit.key, id: prioritized, browsedAt: performance.now() };
+  else if (expandedCursor.key !== unit.key || !members.includes(expandedCursor.id)) {
+    expandedCursor = { key: unit.key, id: members.find((id) => !statusOf(id)) ?? members[0], browsedAt: 0 };
+  } else if (statusOf(expandedCursor.id) && lastDecisionAt > expandedCursor.browsedAt) {
+    // 방금 정한 사진이면 그 뒤에서 아직 안 정한 다음 장으로 (끝까지 갔으면 앞에서부터)
+    const from = members.indexOf(expandedCursor.id);
+    const next = [...members.slice(from + 1), ...members.slice(0, from)].find((id) => !statusOf(id));
+    if (next) expandedCursor.id = next;
+  }
+  const index = members.indexOf(expandedCursor.id);
+  const photo = state.photoById.get(expandedCursor.id);
+  const upcoming = [...members.slice(index + 1), ...members.slice(0, index)].filter((id) => !statusOf(id));
+  renderSingle(stage, photo, (upcoming.length ? upcoming : queue.slice(1).flatMap((next) => next.ids)).slice(0, 2), 'first');
+  const status = statusOf(photo.id);
+  stage.insertAdjacentHTML('afterbegin', `
+    <div class="burst-bar" role="group" aria-label="${t('burstBarAria')}">
+      <button class="button icon-only" id="burst-prev" aria-label="${t('burstPrev')}" title="${t('burstPrev')}">‹</button>
+      <span class="num burst-position">${t('burstPosition', { index: index + 1, total: members.length })}</span>
+      <button class="button icon-only" id="burst-next" aria-label="${t('burstNext')}" title="${t('burstNext')}">›</button>
+      ${status ? `<span class="tag">${t(status === 'keep' ? 'tagAlreadyKept' : 'tagAlreadyDropped')}</span>` : ''}
+      <span class="spacer"></span>
+      <button class="button" id="burst-collapse">${t('burstCollapse')}</button>
+    </div>`);
+  const browse = (step) => {
+    expandedCursor = { key: unit.key, id: members[(index + step + members.length) % members.length], browsedAt: performance.now() };
+    state.priorityIds = [];
+    render();
+  };
+  $('#burst-prev').onclick = () => browse(-1);
+  $('#burst-next').onclick = () => browse(1);
+  $('#burst-collapse').onclick = () => { state.expandedGroups.delete(unit.key); buildUnits(); saveProjectSoon(); render(); };
+  currentKeys = { ...currentKeys, prev: () => browse(-1), next: () => browse(1) };
 }
 
 // 결정하면 그리스 펜슬 표시를 그린 뒤 사진을 옆으로 날려 보낸다. 뒤에 있던 다음 사진은 스프링으로 앞으로 나온다
@@ -2843,7 +2959,7 @@ document.addEventListener('keydown', (event) => {
   if ($('#viewer').open || document.querySelector('dialog[open]') || !PICK_VIEWS.includes(state.view)) return; // 묻는 창이 떠 있으면 뒤의 사진을 고르지 않는다
   if (event.key === 'z' || event.key === 'Z') { event.preventDefault(); undoLast(); return; }
   if (!currentKeys) return;
-  const actions = { ArrowLeft: currentKeys.left, ArrowRight: currentKeys.right, ArrowDown: currentKeys.down, ' ': currentKeys.zoom, f: currentKeys.faces, F: currentKeys.faces };
+  const actions = { ArrowLeft: currentKeys.left, ArrowRight: currentKeys.right, ArrowDown: currentKeys.down, ' ': currentKeys.zoom, f: currentKeys.faces, F: currentKeys.faces, '[': currentKeys.prev, ']': currentKeys.next };
   if (actions[event.key]) { event.preventDefault(); actions[event.key](); return; }
   if (/^[1-9]$/.test(event.key)) currentKeys.number?.(Number(event.key));
 });
@@ -3232,6 +3348,38 @@ function undoTogether() {
   together.index--;
   showTogetherPhoto();
 }
+// 1차 셀렉처럼 사진을 밀어서 정한다: 오른쪽은 둘 다 남기기, 왼쪽은 둘 다 빼기. 덜 밀면 제자리로
+(function attachTogetherSwipe() {
+  const image = $('#together-img');
+  let startX = 0, deltaX = 0, lastX = 0, lastTime = 0, velocity = 0, pointerId = null;
+  image.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0 || pointerId !== null) return;
+    pointerId = event.pointerId;
+    image.setPointerCapture(pointerId);
+    startX = lastX = event.clientX; deltaX = 0; velocity = 0; lastTime = performance.now();
+  });
+  image.addEventListener('pointermove', (event) => {
+    if (event.pointerId !== pointerId) return;
+    const now = performance.now();
+    velocity = (event.clientX - lastX) / Math.max(1, now - lastTime);
+    lastX = event.clientX; lastTime = now;
+    deltaX = event.clientX - startX;
+    image.style.transform = `translateX(${deltaX}px) rotate(${deltaX / 40}deg)`;
+  });
+  const release = (event) => {
+    if (event.pointerId !== pointerId) return;
+    pointerId = null;
+    const flicked = Math.abs(velocity) > SWIPE_FLICK_SPEED && Math.abs(deltaX) > 30 && Math.sign(velocity) === Math.sign(deltaX);
+    if (Math.abs(deltaX) > SWIPE_DISTANCE || flicked) {
+      image.style.transform = '';
+      decideTogether(deltaX > 0 ? 'keep' : 'drop');
+      return;
+    }
+    motion(image, { transform: [`translateX(${deltaX}px) rotate(${deltaX / 40}deg)`, 'translateX(0px) rotate(0deg)'] }, { type: 'spring', bounce: 0.2, duration: 0.35 });
+  };
+  image.addEventListener('pointerup', release);
+  image.addEventListener('pointercancel', release);
+})();
 $('#together-keep').onclick = () => decideTogether('keep');
 $('#together-drop').onclick = () => decideTogether('drop');
 $('#together-back').onclick = undoTogether;

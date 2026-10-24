@@ -133,8 +133,9 @@
   .analyze-meter span { display: block; height: 100%; width: 0; background: var(--ink); transition: width .15s linear; }
   /* 모델 받는 동안: 무엇을 받는지, 사진은 안 나간다는 안내 */
   .analyze-note { margin: -8px 0 16px; max-width: 62ch; }
-  .sheet { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 4px; }
-  .sheet img { width: 100%; aspect-ratio: 3/2; object-fit: cover; display: block; background: var(--sunken); }
+  /* 분석 중: 최근 사진 몇 장이 한 줄로 오른쪽에서 들어와 왼쪽으로 밀려난다 (요소 수는 늘지 않는다) */
+  .sheet { display: flex; justify-content: flex-end; gap: 6px; height: 64px; overflow: hidden; -webkit-mask-image: linear-gradient(to right, transparent, #000 18%); mask-image: linear-gradient(to right, transparent, #000 18%); }
+  .sheet img { flex: 0 0 auto; height: 64px; width: 86px; object-fit: cover; display: block; background: var(--sunken); }
 
   /* ---------- 고르기 화면 ---------- */
   /* 열을 minmax(0, 1fr)로 막아 둔다. auto 열이면 버튼 줄처럼 안 줄어드는 내용이 열을 화면보다 넓혀서,
@@ -177,9 +178,6 @@
   .mark path { fill: none; stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
   .mark.keep path { stroke: var(--marker); }
   .mark.drop path { stroke: #F3F5F4; }
-  .mark .word { position: absolute; top: 4px; font: 400 44px/1 var(--font-marker); transform: rotate(-7deg); }
-  .mark.keep .word { left: 18px; color: var(--marker); }
-  .mark.drop .word { right: 22px; color: #F3F5F4; transform: rotate(6deg); }
   .mark.drawn { opacity: 1; }
   .mark.drawn path { stroke-dasharray: 1; stroke-dashoffset: 1; animation: draw .24s var(--ease-out) forwards; }
   @keyframes draw { to { stroke-dashoffset: 0; } }
@@ -203,6 +201,14 @@
   /* 비슷한 컷 묶음 */
   .burst { width: 100%; height: 100%; display: grid; grid-template-rows: auto 1fr; gap: 12px; }
   .burst-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  /* 한 장씩 보기(묶음 k/n, ‹ ›, 모아서 보기)와 한 장만 보기(비교로 보기) 줄: 사진 위 빈 곳에 두고 사진은 그만큼 아래에서 맞춘다 */
+  .burst-bar { position: absolute; top: 8px; left: 12px; right: 12px; z-index: 5; display: flex; align-items: center; gap: 8px; min-height: 44px; }
+  .stage:has(> .burst-bar) { padding-top: 60px; }
+  .burst-bar .button { height: 40px; }
+  .burst-bar .button.icon-only { width: 44px; height: 44px; justify-content: center; font-size: 22px; line-height: 1; }
+  .burst-bar .burst-position { font-weight: 650; color: var(--stage-ink); }
+  .burst-bar .hint { color: var(--stage-ink-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  body.immersive .burst-bar .burst-position { color: var(--glass-ink); }
   .burst-head h2 { color: var(--stage-ink); }
   .burst-head .hint { color: var(--stage-ink-2); }
   .burst-grid { min-height: 0; overflow: auto; display: grid; gap: 12px; grid-template-columns: repeat(var(--cols, 3), 1fr); grid-auto-rows: max(180px, calc((100% - (var(--rows, 2) - 1) * 12px) / var(--rows, 2))); padding: 14px; }
@@ -211,7 +217,6 @@
   .shot .index { position: absolute; top: 6px; left: 6px; font-size: 12px; font-weight: 600; background: rgba(24, 27, 28, .85); color: var(--stage-ink); border-radius: 3px; padding: 1px 6px; }
   .shot .tags { left: 6px; bottom: 6px; right: 6px; }
   .shot .mark { inset: -8px; }
-  .shot .mark .word { font-size: 30px; left: auto; right: 10px; top: 2px; }
   .shot[aria-pressed="true"] .mark { opacity: 1; }
 
   /* 이미 남긴 비슷한 사진과 비교 */
@@ -357,9 +362,9 @@
   .more-options .field:first-of-type { margin-top: 6px; border-top: none; }
   .more-options .field:last-of-type { border-bottom: none; }
 
-  /* ---------- 분석 화면: 밀착 인화지가 한 장씩 튀어나오며 채워진다 ---------- */
-  .sheet img { border-radius: 6px; animation: pop .45s var(--ease-out-4, ease-out) both; }
-  @keyframes pop { from { opacity: 0; transform: translateY(6px) scale(.86); } }
+  /* ---------- 분석 화면: 방금 분석한 사진이 오른쪽에서 미끄러져 들어온다 ---------- */
+  .sheet img { border-radius: 6px; animation: slide-in .4s var(--ease-out-4, ease-out) both; }
+  @keyframes slide-in { from { opacity: 0; transform: translateX(32px); } }
   .analyze-meter { height: 4px; border-radius: 4px; overflow: hidden; }
   .analyze-meter span { background: var(--keep-gradient); }
 
@@ -569,7 +574,7 @@
   .together-head h2 { font-size: 19px; letter-spacing: -0.02em; }
   .together-head .button { height: 44px; }
   .together-photo { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; border-radius: 14px; background: var(--sunken); overflow: hidden; }
-  .together-photo img { display: block; max-width: 100%; max-height: min(60vh, 520px); object-fit: contain; }
+  .together-photo img { display: block; max-width: 100%; max-height: min(60vh, 520px); object-fit: contain; touch-action: none; user-select: none; -webkit-user-drag: none; cursor: grab; } /* 밀어서 정하기 */
   .together-who { text-align: center; font-weight: 600; font-size: 14px; color: var(--ink-2); }
   .together-actions { display: flex; gap: 8px; }
   .together-actions .button { height: 48px; border-radius: 14px; justify-content: center; }
