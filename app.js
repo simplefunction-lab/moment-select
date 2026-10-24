@@ -74,6 +74,18 @@ const SHARE_BATCH_SIZE = (() => {
 // 내보내기 맨 아래 '응원' 구역 링크. 비어 있는 링크는 숨기고, 둘 다 비면 구역을 그리지 않는다
 const SUPPORT_URL = 'https://buymeacoffee.com/simplefunction';  // Buy Me a Coffee
 const WAITLIST_URL = 'https://tally.so/r/vXG9N4?source=app'; // 아이폰 앱 출시 알림 (Tally). source는 폼의 숨은 필드
+const FEEDBACK_URL = 'https://tally.so/r/EqkO2l'; // 써 본 사람 의견 (Tally). 앱 판(v)과 기기 종류(device)만 숨은 필드로 붙인다
+// 의견 폼에 붙이는 기기 종류: 사람을 알아볼 수 없는 큰 분류만
+function deviceKind() {
+  const agent = navigator.userAgent;
+  if (/iPhone/.test(agent)) return 'iphone';
+  if (/iPad/.test(agent) || (/Macintosh/.test(agent) && navigator.maxTouchPoints > 1)) return 'ipad';
+  if (/Android/.test(agent)) return /Mobile/.test(agent) ? 'android-phone' : 'android-tablet';
+  if (/Mac/.test(agent)) return 'mac';
+  if (/Windows/.test(agent)) return 'windows';
+  return 'other';
+}
+const feedbackUrl = () => `${FEEDBACK_URL}?v=${APP_VERSION}&device=${deviceKind()}`;
 
 // ---------- 판정 기준값 ----------
 const SUPPORTED_IMAGE = /\.(jpe?g|png|webp)$/i;
@@ -103,7 +115,7 @@ const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시�
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
 const CACHE_VERSION = 'v5';             // 분석 방식이 바뀌면 올린다 (v5: 같은 사람 알아보기, 미적 점수)
-const APP_VERSION = 'v29';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
+const APP_VERSION = 'v30';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
 const ANALYZE_SHEET_MAX = 120;           // 분석 화면에 동시에 보여줄 썸네일 수 (1,000장 넘게 불러와도 화면 요소가 계속 늘지 않게)
 const ETA_WARMUP_PHOTOS = 3;             // 이만큼 분석하기 전에는 남은 시간을 보여주지 않는다 (첫 장은 모델 준비로 느리다)
 const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
@@ -3164,13 +3176,14 @@ function organizeSectionHtml(ids) {
 }
 // 내보내기 맨 아래 '응원' 구역: 후원 링크와 아이폰 앱 출시 알림. 사용자가 누를 때만 새 탭으로 열고 referrer도 보내지 않는다
 function supportSectionHtml() {
-  if (supportHidden || (!SUPPORT_URL && !WAITLIST_URL)) return '';
+  if (supportHidden || (!SUPPORT_URL && !WAITLIST_URL && !FEEDBACK_URL)) return '';
   const link = (url, label) => `<a class="button" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
   return `
     <section class="support">
       <div class="support-head"><h2>${t('supportTitle')}</h2><button class="button" id="support-hide" type="button">${t('supportHide')}</button></div>
       ${SUPPORT_URL ? `<p class="hint">${t('supportBody')}</p><div class="row">${link(SUPPORT_URL, `☕ ${t('supportCoffee')}`)}</div>` : ''}
       ${WAITLIST_URL ? `<h3>${t('supportAppTitle')}</h3><p class="hint">${t('supportAppBody')}</p><div class="row">${link(WAITLIST_URL, t('supportNotify'))}</div>` : ''}
+      ${FEEDBACK_URL ? `<h3>${t('supportFeedbackTitle')}</h3><p class="hint">${t('supportFeedbackBody')}</p><div class="row">${link(feedbackUrl(), t('supportFeedback'))}</div>` : ''}
       <p class="hint support-note">${t('supportNote')}</p>
     </section>`;
 }
@@ -3512,4 +3525,6 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
 if (new URLSearchParams(location.search).get('debug') === '1') {
   window.momentSelectDebug = { APP_VERSION, state, faceEngine, aestheticEngine, eyeEngine, hashDistance, correlation, looksSimilar, similarKeptPhotos, scoreAccuracy, trainingPairs, learningEvidence, effectiveCastKeys, firstPassQueue, distillQueue, isLastKeptOfScene, activeModel, diagnosticsText, get probeUnitKey() { return probeUnitKey; } };
 }
+// 시작 화면 아래 의견 링크
+if (FEEDBACK_URL) { $('#feedback-link').href = feedbackUrl(); $('#feedback-link').hidden = false; }
 applyLanguage();
