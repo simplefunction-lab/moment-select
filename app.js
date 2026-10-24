@@ -115,7 +115,7 @@ const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시�
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
 const CACHE_VERSION = 'v5';             // 분석 방식이 바뀌면 올린다 (v5: 같은 사람 알아보기, 미적 점수)
-const APP_VERSION = 'v30';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
+const APP_VERSION = 'v31';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
 const ANALYZE_SHEET_MAX = 120;           // 분석 화면에 동시에 보여줄 썸네일 수 (1,000장 넘게 불러와도 화면 요소가 계속 늘지 않게)
 const ETA_WARMUP_PHOTOS = 3;             // 이만큼 분석하기 전에는 남은 시간을 보여주지 않는다 (첫 장은 모델 준비로 느리다)
 const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
@@ -168,12 +168,13 @@ function modelFromWeights(weights, source, penalizeClosedEyes) {
 const state = {
   folderName: '',                // 화면과 파일 목록에 보이는 폴더 이름
   projectKey: '',                // 결정을 저장하는 이름 (언어와 상관없다)
+  sourceKind: 'handle',          // 사진을 연 방법: handle(폴더 열기), folder(폴더 올리기), photos(사진 보관함에서 고르기)
   photos: [],                    // 사진 목록 (분석 결과 포함)
   photoById: new Map(),          // 사진 id(폴더 안 상대 경로)로 찾기
   groups: new Map(),             // 묶음 id에서 사진 id 배열로
   units: [],                     // 1차 셀렉 단위 (낱장 또는 묶음)
   expandedGroups: new Set(),     // '한 장씩 보기'로 푼 묶음
-  settings: { preset: 'wedding', target: 30, useCategories: true, crowdMin: 5, useScore: true, penalizeClosedEyes: true, share: false },
+  settings: { preset: 'wedding', target: 30, useCategories: true, crowdMin: 5, useScore: true, penalizeClosedEyes: true, share: false, together: false },
   reviewers: { a: { name: t('defaultNameA'), decisions: {} }, b: { name: t('defaultNameB'), decisions: {} } }, // decisions: 사진 id에서 {status, at, addedAt, log}
   currentReviewer: 'a',
   priorModel: null,              // 사진 종류 기본값 또는 서버에서 받은 기본 모델
@@ -329,9 +330,20 @@ function applySettingsFromForm() {
   state.settings.useScore = $('#score-input').checked;
   state.settings.penalizeClosedEyes = $('#eyes-input').checked;
   state.settings.share = Boolean(COLLECT_ENDPOINT) && $('#share-input').checked;
+  state.settings.together = $('#mode-options input:checked')?.value === 'together';
   state.reviewers.a.name = $('#name-a').value.trim() || t('defaultNameA');
   state.reviewers.b.name = $('#name-b').value.trim() || t('defaultNameB');
 }
+// 혼자 / 둘이 고르기: 둘이면 이름 두 칸과 안내를 바로 보여 준다
+function renderModeOptions(together) {
+  if (together !== undefined) for (const input of document.querySelectorAll('#mode-options input')) input.checked = (input.value === 'together') === together;
+  const isTogether = $('#mode-options input:checked')?.value === 'together';
+  markCheckedLabels($('#mode-options'));
+  $('#names-row').classList.toggle('hidden', !isTogether);
+  $('#people-hint').classList.toggle('hidden', !isTogether);
+}
+$('#mode-options').onchange = () => renderModeOptions();
+renderModeOptions();
 
 /* =====================================================================
    1. 폴더 읽기
@@ -401,6 +413,7 @@ async function startWithEntries(folderName, imageEntries, source = { kind: 'hand
   applySettingsFromForm();
   state.folderName = folderName;
   state.projectKey = source.key;
+  state.sourceKind = source.kind;
   claimProject(source.key);
   // 예전 판은 사진 고르기를 화면 문구(folderName)로 저장했다. 폴더로 연 경우는 이름이 같은 다른 폴더 것일 수 있어서 찾지 않는다
   const savedProject = await dbGet(`project:${source.key}`) ?? (source.kind !== 'handle' && source.key !== folderName ? await dbGet(`project:${folderName}`) : undefined);
@@ -577,6 +590,8 @@ function restoreSettingsForm(savedProject) {
   $('#eyes-input').checked = state.settings.penalizeClosedEyes !== false;
   $('#name-a').value = savedProject.reviewers?.a?.name ?? t('defaultNameA');
   $('#name-b').value = savedProject.reviewers?.b?.name ?? t('defaultNameB');
+  // 예전 판에는 '둘이 고르기' 설정이 없어서, 두 번째 사람 이름을 바꿔 뒀거나 결정이 있으면 둘이 고른 것으로 본다
+  renderModeOptions(savedProject.settings.together ?? (!isDefaultName($('#name-b').value) || Object.keys(savedProject.reviewers?.b?.decisions ?? {}).length > 0));
   renderPresetOptions();
   renderTopbar(); // 위쪽 '남긴 사진 0 / 목표'도 되살린 목표로
 }
@@ -1846,21 +1861,28 @@ $('#tabs').onclick = (event) => {
   const button = event.target.closest('button[data-view]');
   if (button && !button.disabled) setView(button.dataset.view);
 };
-function switchReviewer(reviewerKey) {
+function switchReviewer(reviewerKey, toastKey = 'switchedReviewer') {
   if (reviewerKey === state.currentReviewer) return;
   state.currentReviewer = reviewerKey;
   state.undoStack = [];
   rescoreAll();
   buildUnits();
-  showToast(t('switchedReviewer', escapeHtml(reviewer().name)), [], 2600);
+  showToast(t(toastKey, escapeHtml(reviewer().name)), [], 2600);
   render();
+}
+const otherReviewerKey = () => (state.currentReviewer === 'a' ? 'b' : 'a');
+// 둘이 고르는데 다른 사람이 아직 1차 셀렉을 다 안 했으면, 1차 셀렉 끝 화면에서 그 사람 차례로 넘긴다
+const handOffPending = () => pickingAsTwo() && state.photos.some((photo) => !statusOf(photo.id, otherReviewerKey()));
+function handOff() {
+  switchReviewer(otherReviewerKey(), 'handOffToast');
+  setView('first');
 }
 $('#reviewer-toggle').onclick = (event) => {
   const button = event.target.closest('button[data-reviewer]');
   if (button) switchReviewer(button.dataset.reviewer);
 };
-// 둘이 고르는 중인지: 두 번째 사람으로 고르고 있거나, 그 사람의 결정이 있거나, 이름을 바꿔 뒀으면
-const pickingAsTwo = () => state.currentReviewer === 'b' || Object.keys(state.reviewers.b.decisions).length > 0 || !isDefaultName(state.reviewers.b.name);
+// 둘이 고르는 중인지: 시작 화면에서 둘이 고르기를 골랐거나, 두 번째 사람으로 고르고 있거나, 그 사람의 결정이 있거나, 이름을 바꿔 뒀으면
+const pickingAsTwo = () => state.settings.together || state.currentReviewer === 'b' || Object.keys(state.reviewers.b.decisions).length > 0 || !isDefaultName(state.reviewers.b.name);
 
 let previousKeepCount = null; // 직전에 그린 남긴 장수 (목표를 맞추는 순간을 알아보려고)
 function renderTopbar() {
@@ -1882,7 +1904,11 @@ function renderTopbar() {
   $('#goal').classList.toggle('over', keepCount > target);
   $('#goal').classList.toggle('hit', ready && keepCount === target);
   // 목표보다 많이 남겼다가 줄여서 딱 맞춘 순간만 (1차 셀렉에서 남기다가 목표를 지나는 건 아니다)
-  if (ready && PICK_VIEWS.includes(state.view) && previousKeepCount !== null && previousKeepCount > target && keepCount === target) celebrate();
+  if (ready && PICK_VIEWS.includes(state.view) && previousKeepCount !== null && previousKeepCount > target && keepCount === target) {
+    celebrate();
+    // 줄이기 도중 맞췄으면 바로 내보내기로 갈 수 있게 알림 줄에 버튼을 띄운다. 무시하고 계속 넘기면 더 줄일 수 있다
+    if (state.view === 'distill') showToast(t('targetHitToast', target), [{ label: t('btnGoExport'), run: () => setView('export') }], 8000);
+  }
   previousKeepCount = ready ? keepCount : null;
   $('#goal-note').textContent = keepCount > target ? t('goalOver', keepCount - target) : '';
   $('#goal-meter').style.width = `${Math.min(100, (keepCount / target) * 100)}%`;
@@ -2012,8 +2038,11 @@ function renderPickView() {
       return { ids: unit.ids, photo: members.find((photo) => photo.groupBest) ?? members[0], count: unit.ids.length };
     }), head?.ids ?? []);
     if (!head) {
-      return renderEmpty(stage, t('firstDoneTitle'), t('firstDoneBody', { keep: keepCount, target }),
-        [{ label: t('btnDistill'), primary: keepCount > target, run: () => setView('distill') }, { label: t('btnRescueDropped'), run: () => setView('rescue') }, { label: t('btnExport'), primary: keepCount <= target, run: () => setView('export') }]);
+      const otherName = escapeHtml(state.reviewers[otherReviewerKey()].name);
+      const handing = handOffPending();
+      return renderEmpty(stage, t('firstDoneTitle'), t('firstDoneBody', { keep: keepCount, target }) + (handing ? t('firstDoneHandOff', otherName) : ''),
+        [...(handing ? [{ label: t('btnHandOff', otherName), primary: true, run: handOff }] : []),
+         { label: t('btnDistill'), primary: !handing && keepCount > target, run: () => setView('distill') }, { label: t('btnRescueDropped'), run: () => setView('rescue') }, { label: t('btnExport'), primary: !handing && keepCount <= target, run: () => setView('export') }]);
     }
     if (head.type === 'divider') return renderDivider(stage, head);
     if (head.type === 'group') return renderBurst(stage, head);
@@ -3128,16 +3157,97 @@ async function undoOrganize() {
   render();
 }
 
-let exportBasis = 'current'; // current | both | either
+let exportBasis = null; // a | b | both | either (null이면 지금 고르는 사람)
 let supportHidden = false;   // '응원' 구역을 숨겼는지 (기기에만 기억)
 dbGet('supportHidden').then((hidden) => { supportHidden = Boolean(hidden); });
 
 function selectionIds(basis) {
+  if (basis === 'a' || basis === 'b') return keepIds(basis);
   const keepA = new Set(keepIds('a')), keepB = new Set(keepIds('b'));
   if (basis === 'both') return state.photos.filter((photo) => keepA.has(photo.id) && keepB.has(photo.id)).map((photo) => photo.id);
   if (basis === 'either') return state.photos.filter((photo) => keepA.has(photo.id) || keepB.has(photo.id)).map((photo) => photo.id);
   return keepIds();
 }
+
+// 의견이 갈린 사진: 한 사람만 남긴 사진 (다른 사람은 뺐거나 아직 안 봤다)
+function splitPhotoIds() {
+  return state.photos.filter((photo) => (statusOf(photo.id, 'a') === 'keep') !== (statusOf(photo.id, 'b') === 'keep')).map((photo) => photo.id);
+}
+
+// ---------- 의견이 갈린 사진 같이 정하기 ----------
+// 한 장씩 보며 오른쪽은 둘 다 남기기, 왼쪽은 둘 다 빼기. 결정은 두 사람 모두에게 적고, 다 정하면 '둘 다 남긴 사진'을 내보낸다
+const together = { ids: [], index: 0, history: [], url: '' };
+function openTogether(ids) {
+  Object.assign(together, { ids, index: 0, history: [] });
+  $('#together-title').textContent = t('togetherTitle');
+  $('#together').showModal();
+  $('#together').focus(); // 처음부터 '나중에'에 초점이 가면 엔터 한 번에 닫힌다
+  showTogetherPhoto();
+}
+async function showTogetherPhoto() {
+  const id = together.ids[together.index];
+  const photo = state.photoById.get(id);
+  const keptBy = statusOf(id, 'a') === 'keep' ? 'a' : 'b';
+  $('#together-progress').textContent = `${num(together.index + 1)} / ${num(together.ids.length)}`;
+  $('#together-who').textContent = t('togetherWho', state.reviewers[keptBy].name);
+  $('#together-back').disabled = !together.history.length;
+  const image = $('#together-img');
+  image.alt = photo.name;
+  image.src = photo.thumbUrl;
+  const url = URL.createObjectURL(await getPhotoFile(photo));
+  // 원본을 읽는 동안 다음 사진으로 넘어갔으면 버린다
+  if (together.ids[together.index] !== id || !$('#together').open) { URL.revokeObjectURL(url); return; }
+  if (together.url) URL.revokeObjectURL(together.url);
+  together.url = url;
+  image.src = url;
+}
+function decideTogether(status) {
+  const id = together.ids[together.index];
+  if (!id) return;
+  const now = Date.now();
+  together.history.push({ id, previous: { a: structuredClone(decisionOf(id, 'a') ?? null), b: structuredClone(decisionOf(id, 'b') ?? null) } });
+  for (const reviewerKey of ['a', 'b']) {
+    const previous = decisionOf(id, reviewerKey);
+    state.reviewers[reviewerKey].decisions[id] = {
+      status, at: now,
+      addedAt: status === 'keep' ? (previous?.status === 'drop' ? now : previous?.addedAt) : undefined,
+      log: [...(previous?.log ?? []), { status, at: now, stage: 'together', score: state.photoById.get(id)?.score }],
+    };
+  }
+  saveProjectSoon();
+  together.index++;
+  if (together.index < together.ids.length) { showTogetherPhoto(); return; }
+  exportBasis = 'both';
+  $('#together').close();
+  showToast(t('togetherDone', selectionIds('both').length));
+}
+function undoTogether() {
+  const last = together.history.pop();
+  if (!last) return;
+  for (const reviewerKey of ['a', 'b']) {
+    if (last.previous[reviewerKey]) state.reviewers[reviewerKey].decisions[last.id] = last.previous[reviewerKey];
+    else delete state.reviewers[reviewerKey].decisions[last.id];
+  }
+  saveProjectSoon();
+  together.index--;
+  showTogetherPhoto();
+}
+$('#together-keep').onclick = () => decideTogether('keep');
+$('#together-drop').onclick = () => decideTogether('drop');
+$('#together-back').onclick = undoTogether;
+$('#together-close').onclick = () => $('#together').close();
+$('#together').addEventListener('keydown', (event) => {
+  if (event.key === 'ArrowRight') { event.preventDefault(); decideTogether('keep'); }
+  if (event.key === 'ArrowLeft') { event.preventDefault(); decideTogether('drop'); }
+  if (event.key === 'z' || event.key === 'Z') { event.preventDefault(); undoTogether(); }
+});
+// 닫으면(다 정했거나 나중에) 내보내기 화면의 장수와 갈린 사진 수를 다시 그린다
+$('#together').addEventListener('close', () => {
+  if (together.url) URL.revokeObjectURL(together.url);
+  together.url = '';
+  $('#together-img').removeAttribute('src');
+  render();
+});
 
 function selectionListText(ids) {
   const photos = ids.map((id) => state.photoById.get(id));
@@ -3195,8 +3305,9 @@ function renderExportView() {
   const bothCount = keepA.filter((id) => keepBSet.has(id)).length;
   const onlyA = keepA.length - bothCount, onlyB = keepB.filter((id) => !keepASet.has(id)).length;
   const bothDecided = Object.keys(state.reviewers.a.decisions).length > 0 && Object.keys(state.reviewers.b.decisions).length > 0;
-  if (!bothDecided && exportBasis !== 'current') exportBasis = 'current';
+  if (!bothDecided || !exportBasis) exportBasis = state.currentReviewer;
   const ids = selectionIds(exportBasis);
+  const splitIds = splitPhotoIds();
   const closedEyeCount = ids.filter((id) => hasClosedEyes(state.photoById.get(id))).length;
   const nameA = escapeHtml(state.reviewers.a.name), nameB = escapeHtml(state.reviewers.b.name);
   const otherKey = state.currentReviewer === 'a' ? 'b' : 'a';
@@ -3210,9 +3321,8 @@ function renderExportView() {
       : t('summaryOne', { name: escapeHtml(reviewer().name), count: keepIds().length })}</p>
     ${bothDecided ? `<div class="row basis-row">
         <div class="segmented" id="basis-options" role="radiogroup" aria-label="${t('basisAria')}">
-          <label><input type="radio" name="basis" value="current" ${exportBasis === 'current' ? 'checked' : ''}>${t('basisCurrent', escapeHtml(reviewer().name))}</label>
-          <label><input type="radio" name="basis" value="both" ${exportBasis === 'both' ? 'checked' : ''}>${t('basisBoth')}</label>
-          <label><input type="radio" name="basis" value="either" ${exportBasis === 'either' ? 'checked' : ''}>${t('basisEither')}</label>
+          ${[['a', t('basisPerson', nameA)], ['b', t('basisPerson', nameB)], ['both', t('basisBoth')], ['either', t('basisEither')]]
+            .map(([value, label]) => `<label><input type="radio" name="basis" value="${value}" ${exportBasis === value ? 'checked' : ''}>${label}</label>`).join('')}
         </div>
     </div>` : ''}
     ${canOrganize() ? organizeSectionHtml(ids) : ''}
@@ -3245,13 +3355,16 @@ function renderExportView() {
         ${ids.map((id) => { const photo = state.photoById.get(id); const decision = decisionOf(id); return `
           <figure data-id="${escapeHtml(id)}">
             <button class="thumb" aria-label="${t('viewLarge', escapeHtml(photo.name))}"><img src="${photo.thumbUrl}" alt="" loading="lazy"></button>
-            <figcaption><span title="${escapeHtml(photo.relPath)}">${escapeHtml(photo.name)}</span>${hasClosedEyes(photo) ? `<i class="ph ph-eye-closed flagged" title="${t('tagEyes')}"></i>` : ''}${decision?.addedAt ? `<i class="ph ph-arrow-u-up-left" title="${t('reAddedTitle')}"></i>` : ''}${exportBasis === 'current' ? `<button class="remove" title="${t('removeTitle')}" aria-label="${t('removeTitle')}"><i class="ph ph-x"></i></button>` : ''}</figcaption>
+            <figcaption><span title="${escapeHtml(photo.relPath)}">${escapeHtml(photo.name)}</span>${hasClosedEyes(photo) ? `<i class="ph ph-eye-closed flagged" title="${t('tagEyes')}"></i>` : ''}${decision?.addedAt ? `<i class="ph ph-arrow-u-up-left" title="${t('reAddedTitle')}"></i>` : ''}${exportBasis === state.currentReviewer ? `<button class="remove" title="${t('removeTitle')}" aria-label="${t('removeTitle')}"><i class="ph ph-x"></i></button>` : ''}</figcaption>
           </figure>`; }).join('')}
       </div>
     </section>
     <details class="export-merge" ${bothDecided ? 'open' : ''}>
       <summary><h2>${t('mergeTitle')}</h2></summary>
       <p class="hint">${t('mergeHint')}</p>
+      ${bothDecided ? `<div class="merge-split">${splitIds.length
+        ? `<p class="hint">${t('mergeSplitHint')}</p><div class="row"><button class="button primary" id="split-together">${t('btnSplitTogether', splitIds.length)}</button></div>`
+        : `<p class="hint">${t('mergeNoSplit')}</p>`}</div>` : ''}
       <div class="row"><button class="button" id="pick-as-other"><i class="ph ph-arrow-u-up-left"></i>${t('pickAsOther', otherName)}</button></div>
       <div class="row">
         <input type="text" id="rename-a" value="${nameA}" style="width:120px" aria-label="${t('nameAAria')}">
@@ -3289,11 +3402,12 @@ function renderExportView() {
   $('#rename-a').onchange = (event) => { state.reviewers.a.name = event.target.value.trim() || t('defaultNameA'); saveProjectSoon(); render(); };
   $('#rename-b').onchange = (event) => { state.reviewers.b.name = event.target.value.trim() || t('defaultNameB'); saveProjectSoon(); render(); };
   $('#decisions-save').onclick = () => {
-    const payload = { app: 'moment-select', version: 2, folder: state.folderName, reviewer: reviewer().name, exportedAt: Date.now(), decisions: reviewer().decisions };
+    const payload = { app: 'moment-select', version: 2, folder: state.folderName, source: state.sourceKind, reviewer: reviewer().name, exportedAt: Date.now(), decisions: reviewer().decisions };
     downloadBlob(new Blob([JSON.stringify(payload)], { type: 'application/json' }), t('decisionFileName', reviewer().name));
   };
   $('#decisions-load').onclick = () => $('#decisions-file').click();
   $('#pick-as-other').onclick = () => { switchReviewer(otherKey); setView('first'); };
+  if ($('#split-together')) $('#split-together').onclick = () => openTogether(splitIds);
   $('#decisions-file').onchange = async (event) => {
     const file = event.target.files[0];
     if (!file) return;
@@ -3305,7 +3419,10 @@ function renderExportView() {
       // 다른 폴더의 파일이거나, 이름이 맞는 사진이 절반도 안 되거나, 상대 결정을 바꾸게 되면 먼저 확인한다
       // (사진 이름은 카메라마다 IMG_0001처럼 겹쳐서 이름만 맞는다고 같은 사진이 아니다)
       const total = Object.keys(payload.decisions).length, matchedCount = Object.keys(matched).length;
-      const otherFolder = payload.folder && payload.folder !== state.folderName ? payload.folder : null;
+      // 사진 보관함에서 고른 경우 폴더 이름은 '사진 5장 (첫 파일부터)'처럼 고른 순서와 앱 언어로 만든 문구라 비교하지 않는다.
+      // 같은 사진인지는 아래 이름이 맞는 비율로만 본다
+      const pickedPhotos = state.sourceKind === 'photos' || payload.source === 'photos';
+      const otherFolder = !pickedPhotos && payload.folder && payload.folder !== state.folderName ? payload.folder : null;
       const replacing = Object.keys(state.reviewers[otherKey].decisions).length;
       if (otherFolder || matchedCount * 2 < total || replacing) {
         const notes = [
@@ -3317,7 +3434,8 @@ function renderExportView() {
         if (!answer.ok) return;
       }
       state.reviewers[otherKey].decisions = matched;
-      if (payload.reviewer) state.reviewers[otherKey].name = payload.reviewer;
+      // 보낸 사람이 직접 적은 이름만 가져온다. 두 휴대폰 모두 기본 이름('나')이면 '나 5장, 나 5장'이 되니 상대 이름(기본 '파트너')을 그대로 둔다
+      if (payload.reviewer && !isDefaultName(payload.reviewer) && payload.reviewer !== reviewer().name) state.reviewers[otherKey].name = payload.reviewer;
       saveProjectSoon();
       showToast(t('decisionsLoaded', { name: escapeHtml(state.reviewers[otherKey].name), count: Object.keys(matched).length, skipped: Object.keys(matched).length < Object.keys(payload.decisions).length }));
       render();

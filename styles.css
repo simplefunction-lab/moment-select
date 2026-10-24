@@ -554,6 +554,32 @@
   .export-merge[open] summary::after { transform: rotate(225deg) translateY(-2px); }
   .export-merge > p { margin-top: 8px; max-width: 70ch; }
   .export-merge input[type=text] { height: 40px; border-radius: 12px; }
+  .merge-split { margin-top: 14px; }
+  .merge-split .hint { max-width: 70ch; }
+  /* 시작 화면 '둘이 고르기'의 이름 두 칸 */
+  .names-row { margin-top: 10px; }
+  .names-row input { width: 150px; height: 40px; border-radius: 12px; background: rgba(255, 255, 255, .8); }
+
+  /* 의견이 갈린 사진 같이 정하기 창 (휴대폰에서는 화면 가득) */
+  dialog.together { width: min(720px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 18px; border: 1px solid rgba(30, 37, 35, .1); border-radius: var(--radius-xl); background: var(--surface); color: var(--ink); }
+  dialog.together[open] { display: flex; flex-direction: column; gap: 12px; }
+  dialog.together::backdrop { background: rgba(20, 23, 24, .6); }
+  dialog.together:focus { outline: none; } /* 열 때 창 자체에 초점을 둔다 (키보드 화살표용) */
+  .together-head { display: flex; align-items: center; gap: 10px; }
+  .together-head h2 { font-size: 19px; letter-spacing: -0.02em; }
+  .together-head .button { height: 44px; }
+  .together-photo { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; border-radius: 14px; background: var(--sunken); overflow: hidden; }
+  .together-photo img { display: block; max-width: 100%; max-height: min(60vh, 520px); object-fit: contain; }
+  .together-who { text-align: center; font-weight: 600; font-size: 14px; color: var(--ink-2); }
+  .together-actions { display: flex; gap: 8px; }
+  .together-actions .button { height: 48px; border-radius: 14px; justify-content: center; }
+  #together-drop, #together-keep { flex: 1 1 0; }
+  #together-back { width: 48px; padding: 0; }
+  .together-actions .button.primary { border: none; background: var(--keep-gradient); box-shadow: var(--keep-glow), inset 0 1px 0 rgba(255, 255, 255, .28); }
+  @media (max-width: 760px) {
+    dialog.together { width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; border: none; border-radius: 0; padding: 16px 16px calc(16px + env(safe-area-inset-bottom)); }
+    .together-photo img { max-height: 100%; }
+  }
 
   /* ---------- 좁은 화면의 상단 바 (휴대폰, 태블릿) ----------
      한 줄에 이름, 단계 탭, 언어, 사람, 남긴 사진이 다 들어가지 않으면 화면이 옆으로 밀린다.
@@ -622,6 +648,7 @@
   @media (max-width: 760px) {
     .toast { top: auto; left: 12px; right: 12px; max-width: none; bottom: max(16px, env(safe-area-inset-bottom)); }
     body.immersive .toast { bottom: calc(150px + env(safe-area-inset-bottom)); }
+    .toast .button { height: 40px; } /* 알림 줄의 되돌리기·내보내기로를 손가락으로 누를 만하게 */
   }
   /* 320px 같은 아주 좁은 화면: 버튼 다섯 개가 한 줄에 들어가게 아이콘 버튼과 간격을 줄이고, 결정 버튼의 아이콘은 뺀다.
      min-width: 0이 없으면 글자 폭만큼 버티다가 줄 양끝이 화면 밖으로 밀려난다 */
@@ -640,6 +667,7 @@
     .quick { margin-top: 14px; }
     .quick .field { padding: 10px 0; }
     #preset-hint, #target-hint { display: none; }
+    .quick .mode-field > .label { display: none; } /* '혼자 고르기 / 둘이 고르기' 칩만으로 뜻이 통한다 */
     .start-row { margin-top: 16px; }
   }
   html.touch kbd { display: none; }
