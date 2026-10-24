@@ -538,6 +538,14 @@
   dialog.ask .button { height: 44px; border-radius: 14px; padding: 0 16px; }
   dialog.ask .button.primary { border: none; background: var(--keep-gradient); box-shadow: var(--keep-glow), inset 0 1px 0 rgba(255, 255, 255, .28); }
   .export-merge { margin-top: 32px; padding-top: 18px; border-top: 1px solid rgba(30, 37, 35, .1); }
+  /* 내보내기 맨 아래 '응원' 구역 */
+  .support { margin-top: 28px; padding: 18px; border: 1px solid var(--rule); border-radius: var(--radius-l, 16px); background: var(--surface); }
+  .support-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+  .support h2 { margin: 0 0 6px; }
+  .support h3 { margin: 18px 0 4px; padding-top: 16px; border-top: 1px solid var(--rule); font-size: 16px; }
+  .support .hint { margin: 0 0 12px; }
+  .support .support-note { margin: 12px 0 0; font-size: 13px; }
+  a.button { text-decoration: none; }
   .export-merge summary { display: flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; list-style: none; } /* 손가락으로 누를 만한 높이 */
   .export-merge summary::-webkit-details-marker { display: none; }
   .export-merge summary::after { content: ""; width: 7px; height: 7px; border-right: 1.5px solid var(--ink-2); border-bottom: 1.5px solid var(--ink-2); transform: rotate(45deg) translateY(-2px); }

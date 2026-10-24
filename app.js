@@ -71,6 +71,9 @@ const SHARE_BATCH_SIZE = (() => {
   const requested = Number(new URLSearchParams(location.search).get('shareBatch'));
   return Number.isInteger(requested) && requested >= 1 && requested <= 500 ? requested : 10;
 })();
+// 내보내기 맨 아래 '응원' 구역 링크. 비어 있는 링크는 숨기고, 둘 다 비면 구역을 그리지 않는다
+const SUPPORT_URL = '';  // Buy Me a Coffee
+const WAITLIST_URL = ''; // 아이폰 앱 출시 알림 (Tally)
 
 // ---------- 판정 기준값 ----------
 const SUPPORTED_IMAGE = /\.(jpe?g|png|webp)$/i;
@@ -100,7 +103,7 @@ const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시�
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
 const CACHE_VERSION = 'v5';             // 분석 방식이 바뀌면 올린다 (v5: 같은 사람 알아보기, 미적 점수)
-const APP_VERSION = 'v28';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
+const APP_VERSION = 'v29';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
 const ANALYZE_SHEET_MAX = 120;           // 분석 화면에 동시에 보여줄 썸네일 수 (1,000장 넘게 불러와도 화면 요소가 계속 늘지 않게)
 const ETA_WARMUP_PHOTOS = 3;             // 이만큼 분석하기 전에는 남은 시간을 보여주지 않는다 (첫 장은 모델 준비로 느리다)
 const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
@@ -3114,6 +3117,8 @@ async function undoOrganize() {
 }
 
 let exportBasis = 'current'; // current | both | either
+let supportHidden = false;   // '응원' 구역을 숨겼는지 (기기에만 기억)
+dbGet('supportHidden').then((hidden) => { supportHidden = Boolean(hidden); });
 
 function selectionIds(basis) {
   const keepA = new Set(keepIds('a')), keepB = new Set(keepIds('b'));
@@ -3156,6 +3161,18 @@ function organizeSectionHtml(ids) {
       <p class="hint">${t('organizeNote')}</p>`;
   }
   return `<section class="organize"><h2>${t('organizeTitle')}</h2>${body}</section>`;
+}
+// 내보내기 맨 아래 '응원' 구역: 후원 링크와 아이폰 앱 출시 알림. 사용자가 누를 때만 새 탭으로 열고 referrer도 보내지 않는다
+function supportSectionHtml() {
+  if (supportHidden || (!SUPPORT_URL && !WAITLIST_URL)) return '';
+  const link = (url, label) => `<a class="button" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+  return `
+    <section class="support">
+      <div class="support-head"><h2>${t('supportTitle')}</h2><button class="button" id="support-hide" type="button">${t('supportHide')}</button></div>
+      ${SUPPORT_URL ? `<p class="hint">${t('supportBody')}</p><div class="row">${link(SUPPORT_URL, `☕ ${t('supportCoffee')}`)}</div>` : ''}
+      ${WAITLIST_URL ? `<h3>${t('supportAppTitle')}</h3><p class="hint">${t('supportAppBody')}</p><div class="row">${link(WAITLIST_URL, t('supportNotify'))}</div>` : ''}
+      <p class="hint support-note">${t('supportNote')}</p>
+    </section>`;
 }
 
 function renderExportView() {
@@ -3230,8 +3247,10 @@ function renderExportView() {
         <button class="button" id="decisions-load"><i class="ph ph-upload-simple"></i>${t('loadDecisions')}</button>
         <input type="file" id="decisions-file" accept="application/json" hidden>
       </div>
-    </details>`;
+    </details>
+    ${supportSectionHtml()}`;
 
+  if ($('#support-hide')) $('#support-hide').onclick = () => { supportHidden = true; dbSet('supportHidden', true); render(); };
   if ($('#organize-run')) $('#organize-run').onclick = () => organizeFolder(ids);
   if ($('#organize-undo')) $('#organize-undo').onclick = undoOrganize;
   if ($('#basis-options')) { markCheckedLabels($('#basis-options')); $('#basis-options').onchange = (event) => { exportBasis = event.target.value; render(); }; }

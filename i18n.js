@@ -59,6 +59,9 @@ const MESSAGES = {
     organizePermission: '사진을 옮기려면 이 폴더를 편집하도록 허용해 주세요.',
     organizeLogHeader: ({ time, name }) => `모먼트 셀렉 폴더 정리 기록 (${time})\n'${name}' 폴더를 만들어 옮겼어요. 원래 위치 → 옮긴 위치\n도중에 멈췄다면 목록 끝쪽 파일은 아직 원래 위치에 있을 수 있어요.`,
     pickAsOther: (name) => `${name} 차례로 고르기`,
+    supportTitle: '모먼트 셀렉이 도움이 됐나요?', supportBody: '무료이고 광고도 추적도 없어요. 저녁 시간을 아껴 드렸다면 커피 한 잔으로 응원해 주세요.', supportCoffee: '커피 사 주기',
+    supportAppTitle: '다음은 아이폰 앱', supportAppBody: '고른 사진을 복사본 없이 사진 보관함의 앨범으로 정리해요.', supportNotify: '출시 알림 받기',
+    supportNote: '두 링크 모두 새 탭으로 열려요. 사진에 관한 정보는 아무것도 보내지 않아요.', supportHide: '숨기기',
     defaultNameA: '나', defaultNameB: '파트너',
 
     // ---------- 시작 화면 ----------
@@ -308,6 +311,9 @@ const MESSAGES = {
     organizePermission: 'Allow editing this folder to move your photos.',
     organizeLogHeader: ({ time, name }) => `Moment Select folder sort (${time})\nCreated "${name}" and moved: original location -> new location\nIf the sort stopped partway, files near the end of this list may still be in their original location.`,
     pickAsOther: (name) => `Pick as ${name}`,
+    supportTitle: 'Enjoying Moment Select?', supportBody: 'It’s free, with no ads and no tracking. If it saved you an evening, you can buy me a coffee.', supportCoffee: 'Buy me a coffee',
+    supportAppTitle: 'iPhone app, coming next', supportAppBody: 'Sort your picks into an album in your photo library, with no duplicate copies.', supportNotify: 'Get notified',
+    supportNote: 'Both links open in a new tab. Nothing about your photos is sent.', supportHide: 'Hide',
     defaultNameA: 'Me', defaultNameB: 'Partner',
 
     setupTitle: 'Pick the photos to keep',
