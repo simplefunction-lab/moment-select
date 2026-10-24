@@ -72,8 +72,8 @@ const SHARE_BATCH_SIZE = (() => {
   return Number.isInteger(requested) && requested >= 1 && requested <= 500 ? requested : 10;
 })();
 // 내보내기 맨 아래 '응원' 구역 링크. 비어 있는 링크는 숨기고, 둘 다 비면 구역을 그리지 않는다
-const SUPPORT_URL = '';  // Buy Me a Coffee
-const WAITLIST_URL = ''; // 아이폰 앱 출시 알림 (Tally)
+const SUPPORT_URL = 'https://buymeacoffee.com/simplefunction';  // Buy Me a Coffee
+const WAITLIST_URL = 'https://tally.so/r/vXG9N4?source=app'; // 아이폰 앱 출시 알림 (Tally). source는 폼의 숨은 필드
 
 // ---------- 판정 기준값 ----------
 const SUPPORTED_IMAGE = /\.(jpe?g|png|webp)$/i;
