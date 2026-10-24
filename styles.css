@@ -538,7 +538,7 @@
   dialog.ask .button { height: 44px; border-radius: 14px; padding: 0 16px; }
   dialog.ask .button.primary { border: none; background: var(--keep-gradient); box-shadow: var(--keep-glow), inset 0 1px 0 rgba(255, 255, 255, .28); }
   .export-merge { margin-top: 32px; padding-top: 18px; border-top: 1px solid rgba(30, 37, 35, .1); }
-  .export-merge summary { display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; }
+  .export-merge summary { display: flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; list-style: none; } /* 손가락으로 누를 만한 높이 */
   .export-merge summary::-webkit-details-marker { display: none; }
   .export-merge summary::after { content: ""; width: 7px; height: 7px; border-right: 1.5px solid var(--ink-2); border-bottom: 1.5px solid var(--ink-2); transform: rotate(45deg) translateY(-2px); }
   .export-merge[open] summary::after { transform: rotate(225deg) translateY(-2px); }
