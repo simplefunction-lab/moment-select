@@ -43,6 +43,14 @@ When narrowing down, photos are split into scenes by capture time. The last kept
 
 The Scoring panel shows how well the score matches your decisions, measured with the score each photo had when you decided. 50% is chance.
 
+## Support and the iPhone app
+
+Moment Select is free, with no ads and no tracking. If it saved you an evening, you can [buy me a coffee](https://buymeacoffee.com/simplefunction).
+
+An iPhone app is next. It will sort your picks into an album in your photo library, with no duplicate copies. [Get notified](https://tally.so/r/vXG9N4?source=readme) when it's out.
+
+The same two links sit at the bottom of the Export screen. They open in a new tab and send no referrer; the page itself still makes no requests to other sites.
+
 ## Run locally
 
 The app is plain HTML, CSS and JavaScript with no build step. It has to be served over HTTP, because module scripts and the service worker do not run from `file://`.
@@ -107,6 +115,14 @@ npx serve .
 줄이기 단계에서는 촬영 시각으로 장면을 나눠요. 어떤 장면의 마지막 남은 사진은 맨 뒤로 미뤄서, 장면 하나가 통째로 빠지지 않게 해요.
 
 점수 기준 패널에서 점수가 내 결정을 얼마나 맞혔는지 볼 수 있어요. 결정할 때 보이던 점수로 계산하고, 50%면 무작위 수준이에요.
+
+### 응원과 아이폰 앱
+
+모먼트 셀렉은 무료이고 광고도 추적도 없어요. 도움이 됐다면 [커피 한 잔으로 응원](https://buymeacoffee.com/simplefunction)해 주세요.
+
+다음은 아이폰 앱이에요. 고른 사진을 복사본 없이 사진 보관함의 앨범으로 정리해요. 나오면 [알림 받기](https://tally.so/r/vXG9N4?source=readme).
+
+내보내기 화면 맨 아래에도 같은 두 링크가 있어요. 새 탭으로 열리고 어디서 왔는지(referrer)도 보내지 않아요. 페이지 자체는 여전히 다른 사이트로 아무 요청도 보내지 않아요.
 
 ### 내 컴퓨터에서 실행
 
