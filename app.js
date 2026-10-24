@@ -66,7 +66,11 @@ document.documentElement.classList.toggle('touch', isTouchDevice);
 // container queries를 모르는 브라우저(Chrome 104 이하, Safari 15 이하)는 사진 카드 크기를 직접 맞춘다
 const supportsContainerQueries = CSS.supports('container-type: size');
 const canShareFiles = Boolean(navigator.canShare?.({ files: [new File([''], 'probe.jpg', { type: 'image/jpeg' })] })); // 공유 시트로 파일 저장 가능
-const SHARE_BATCH_SIZE = 10; // 공유 시트 한 번에 넘길 장수
+// 공유 시트 한 번에 넘길 장수. 실제 기기에서 한계를 재려고 주소에 ?shareBatch=N(1~500)을 붙이면 바꿀 수 있다
+const SHARE_BATCH_SIZE = (() => {
+  const requested = Number(new URLSearchParams(location.search).get('shareBatch'));
+  return Number.isInteger(requested) && requested >= 1 && requested <= 500 ? requested : 10;
+})();
 
 // ---------- 판정 기준값 ----------
 const SUPPORTED_IMAGE = /\.(jpe?g|png|webp)$/i;
@@ -96,7 +100,7 @@ const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시�
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
 const CACHE_VERSION = 'v5';             // 분석 방식이 바뀌면 올린다 (v5: 같은 사람 알아보기, 미적 점수)
-const APP_VERSION = 'v27';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
+const APP_VERSION = 'v28';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
 const ANALYZE_SHEET_MAX = 120;           // 분석 화면에 동시에 보여줄 썸네일 수 (1,000장 넘게 불러와도 화면 요소가 계속 늘지 않게)
 const ETA_WARMUP_PHOTOS = 3;             // 이만큼 분석하기 전에는 남은 시간을 보여주지 않는다 (첫 장은 모델 준비로 느리다)
 const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
