@@ -69,6 +69,18 @@
             <div class="inline"><span class="stepper"><button type="button" class="step" data-step="-1" aria-label="Fewer" data-i18n-aria="stepDown"><i class="ph ph-minus" aria-hidden="true"></i></button><input type="number" id="target-input" min="1" value="20" inputmode="numeric"><button type="button" class="step" data-step="1" aria-label="More" data-i18n-aria="stepUp"><i class="ph ph-plus" aria-hidden="true"></i></button></span><span class="hint" id="target-hint">Fits one Instagram carousel. You can change this anytime.</span></div>
           </div>
         </div>
+        <!-- 혼자 고르는지 둘이 고르는지. 둘이면 이름 두 칸이 바로 나온다 -->
+        <div class="field mode-field">
+          <span class="label" data-i18n="fieldPeople">Who is picking</span>
+          <div class="control">
+            <div class="segmented" id="mode-options" role="radiogroup" aria-label="Who is picking" data-i18n-aria="reviewerAria">
+              <label><input type="radio" name="mode" value="solo" checked><span data-i18n="modeSolo">Just me</span></label>
+              <label><input type="radio" name="mode" value="together"><span data-i18n="modeTogether">Two of us</span></label>
+            </div>
+            <div class="inline names-row hidden" id="names-row"><input type="text" id="name-a" value="Me" maxlength="30" aria-label="First person" data-i18n-aria="personAAria"><input type="text" id="name-b" value="Partner" maxlength="30" aria-label="Second person" data-i18n-aria="personBAria"></div>
+            <p class="hint hidden" id="people-hint" data-i18n="peopleHint">Each of you picks on your own, then you merge. Neither sees the other's picks.</p>
+          </div>
+        </div>
       </div>
 
       <div class="start-row">
@@ -98,13 +110,6 @@
           <span class="label" data-i18n="fieldEyes">Closed eyes</span>
           <div class="control">
             <label class="check"><input type="checkbox" id="eyes-input" checked><span><span data-i18n="eyesCheck">Lower the score of closed-eye shots</span><br><span class="hint" data-i18n="eyesHint">Turn this off if closed eyes are fine, or if your photographer can swap in open eyes.</span></span></label>
-          </div>
-        </div>
-        <div class="field">
-          <span class="label" data-i18n="fieldPeople">Who is picking</span>
-          <div class="control">
-            <div class="inline"><input type="text" id="name-a" value="Me" style="width:120px" aria-label="First person" data-i18n-aria="personAAria"><input type="text" id="name-b" value="Partner" style="width:120px" aria-label="Second person" data-i18n-aria="personBAria"></div>
-            <p class="hint" data-i18n="peopleHint">Picking with someone? Each of you picks, then merge. Solo? Leave this as is.</p>
           </div>
         </div>
         <div class="field hidden" id="share-field">
@@ -173,6 +178,17 @@
   <label class="ask-field hidden" id="ask-field"><span id="ask-label"></span><input type="text" id="ask-input" maxlength="100" autocomplete="off" spellcheck="false"></label>
   <div class="row"><button class="button" value="cancel" id="ask-cancel"></button><button class="button primary" value="ok" id="ask-ok"></button></div>
 </form></dialog>
+<!-- 둘의 의견이 갈린 사진을 한 장씩 같이 정하는 창. 오른쪽은 둘 다 남기기, 왼쪽은 둘 다 빼기. 내용은 app.js의 openTogether가 채운다 -->
+<dialog id="together" class="together" tabindex="-1">
+  <div class="together-head"><h2 id="together-title"></h2><span class="hint num" id="together-progress"></span><span class="spacer"></span><button class="button" id="together-close" data-i18n="togetherClose">Later</button></div>
+  <div class="together-photo"><img id="together-img" alt=""></div>
+  <p class="together-who" id="together-who"></p>
+  <div class="together-actions">
+    <button class="button" id="together-drop"><span data-i18n="togetherDrop">Both drop</span></button>
+    <button class="button quiet" id="together-back" aria-label="Back" data-i18n-aria="togetherBack"><i class="ph ph-arrow-counter-clockwise" aria-hidden="true"></i></button>
+    <button class="button primary" id="together-keep"><span data-i18n="togetherKeep">Both keep</span></button>
+  </div>
+</dialog>
 <dialog id="viewer"><button class="button close" id="viewer-close"><i class="ph ph-x"></i><span data-i18n="viewerClose">Close</span></button></dialog>
 <div class="toast hidden" id="toast" role="status"></div>
 <!-- 목표 장수를 맞췄을 때 축하 표시 -->
