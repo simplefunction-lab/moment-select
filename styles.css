@@ -134,8 +134,6 @@
   /* 모델 받는 동안: 무엇을 받는지, 사진은 안 나간다는 안내 */
   .analyze-note { margin: -8px 0 16px; max-width: 62ch; }
   /* 분석 중: 최근 사진 몇 장이 한 줄로 오른쪽에서 들어와 왼쪽으로 밀려난다 (요소 수는 늘지 않는다) */
-  .sheet { display: flex; justify-content: flex-end; gap: 6px; height: 64px; overflow: hidden; -webkit-mask-image: linear-gradient(to right, transparent, #000 18%); mask-image: linear-gradient(to right, transparent, #000 18%); }
-  .sheet img { flex: 0 0 auto; height: 64px; width: 86px; object-fit: cover; display: block; background: var(--sunken); }
 
   /* ---------- 고르기 화면 ---------- */
   /* 열을 minmax(0, 1fr)로 막아 둔다. auto 열이면 버튼 줄처럼 안 줄어드는 내용이 열을 화면보다 넓혀서,
@@ -362,10 +360,8 @@
   .more-options .field:first-of-type { margin-top: 6px; border-top: none; }
   .more-options .field:last-of-type { border-bottom: none; }
 
-  /* ---------- 분석 화면: 방금 분석한 사진이 오른쪽에서 미끄러져 들어온다 ---------- */
-  .sheet img { border-radius: 6px; animation: slide-in .4s var(--ease-out-4, ease-out) both; }
-  @keyframes slide-in { from { opacity: 0; transform: translateX(32px); } }
-  .analyze-meter { height: 4px; border-radius: 4px; overflow: hidden; }
+  /* ---------- 분석 화면: 진행 막대만 (사진은 그리지 않아 분석에 자원을 다 쓴다) ---------- */
+  .analyze-meter { height: 8px; border-radius: 8px; overflow: hidden; }
   .analyze-meter span { background: var(--keep-gradient); }
 
   /* ---------- 고르기 화면 (immersive) ---------- */
