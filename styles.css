@@ -541,6 +541,11 @@
     .toolbar .notice { flex: 1 1 180px; min-width: 0; }
     .toolbar > .button { flex-shrink: 0; white-space: nowrap; }
   }
+  /* 태블릿 폭: 1·2·3장 버튼이 들어오면 장면 필터가 글자 중간에서 잘리므로, 휴대폰처럼 주요 인물·점수 기준은 아이콘만 */
+  @media (min-width: 761px) and (max-width: 1099px) {
+    #criteria-button, #cast-button, #compare-toggle { padding: 0 10px; }
+    #criteria-button .label, #cast-button .label, #compare-toggle .label { display: none; }
+  }
 
   /* ---------- 내보내기 ---------- */
   .export h1 { font-size: clamp(30px, 6vw, 44px); letter-spacing: -0.04em; font-weight: 760; }
