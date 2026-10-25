@@ -30,6 +30,8 @@
   <span class="spacer"></span>
   <!-- 둘이 고를 때만 보이는 사람 전환 (혼자 쓰면 숨긴다) -->
   <div class="reviewer-toggle hidden" id="reviewer-toggle" role="radiogroup" aria-label="Who is picking" data-i18n-aria="reviewerAria"></div>
+  <!-- 고르는 동안 뒤에서 분석이 계속될 때의 진행 -->
+  <div class="bg-analysis hidden" id="bg-analysis"><span class="num" id="bg-analysis-text"></span><span class="bg-meter"><span id="bg-analysis-meter"></span></span></div>
   <div class="goal" id="goal">
     <div class="goal-line"><span><span data-i18n="goalKept">Kept</span> <b class="num" id="goal-count">0</b> / <span class="num" id="goal-target">0</span><span data-i18n="goalUnit"></span></span><span class="goal-note num" id="goal-note"></span></div>
     <div class="goal-meter"><span id="goal-meter"></span></div>
@@ -112,6 +114,13 @@
             <label class="check"><input type="checkbox" id="eyes-input" checked><span><span data-i18n="eyesCheck">Lower the score of closed-eye shots</span><br><span class="hint" data-i18n="eyesHint">Turn this off if closed eyes are fine, or if your photographer can swap in open eyes.</span></span></label>
           </div>
         </div>
+        <div class="field">
+          <label for="burst-rest-input" data-i18n="fieldBurstRest">Unpicked shots in a set</label>
+          <div class="control">
+            <select id="burst-rest-input"><option value="ask" data-i18n="burstRestAsk">Ask each time</option><option value="drop" data-i18n="burstRestDrop">Drop them</option><option value="later" data-i18n="burstRestLater">Look at them later</option></select>
+            <p class="hint" data-i18n="burstRestHint">When you confirm a set of similar shots, what happens to the ones you didn't pick.</p>
+          </div>
+        </div>
         <div class="field hidden" id="share-field">
           <span class="label" data-i18n="fieldShare">Share stats</span>
           <div class="control">
@@ -141,6 +150,8 @@
         <button class="button quiet" id="skip-faces" data-i18n="skipFaces">Skip faces (faster)</button>
       </div>
       <div class="analyze-meter"><span id="analyze-meter"></span></div>
+      <!-- 첫 100장이 분석되면: 분석이 끝나기 전에 고르기 시작 (나머지는 뒤에서 계속 분석) -->
+      <div class="analyze-start hidden" id="analyze-start-row"><button class="button primary" id="analyze-start" data-i18n="analyzeStart">Start picking now</button><span class="hint" id="analyze-start-hint"></span></div>
       <p class="hint analyze-note hidden" id="analyze-note"></p>
     </div>
   </section>
@@ -152,6 +163,10 @@
         <div class="filters" id="filters"></div>
         <span class="notice" id="notice"></span>
         <span class="spacer"></span>
+        <!-- 태블릿·PC: 한 번에 볼 장수 (1·2·3장 나란히, 칸마다 따로 확대) -->
+        <div class="view-count hidden" id="view-count" role="radiogroup" aria-label="Photos at a time" data-i18n-aria="viewCountAria">
+          <button type="button" role="radio" data-count="1" data-i18n="viewOne">1</button><button type="button" role="radio" data-count="2" data-i18n="viewTwo">2</button><button type="button" role="radio" data-count="3" data-i18n="viewThree">3</button>
+        </div>
         <button class="button quiet hidden" id="compare-toggle" aria-pressed="false" aria-label="Side by side" data-i18n-aria="compareToggle"><i class="ph ph-columns"></i><span class="label" data-i18n="compareToggle">Side by side</span></button>
         <button class="button quiet hidden" id="cast-button" popovertarget="cast" aria-label="Main people" data-i18n-aria="castButton"><i class="ph ph-user-focus"></i><span class="label" data-i18n="castButton">Main people</span></button>
         <button class="button quiet" id="criteria-button" popovertarget="criteria" aria-label="Scoring" data-i18n-aria="criteriaButton"><i class="ph ph-sliders-horizontal"></i><span class="label" data-i18n="criteriaButton">Scoring</span></button>
@@ -175,7 +190,8 @@
   <h2 id="ask-title"></h2>
   <p class="hint" id="ask-body"></p>
   <label class="ask-field hidden" id="ask-field"><span id="ask-label"></span><input type="text" id="ask-input" maxlength="100" autocomplete="off" spellcheck="false"></label>
-  <div class="row"><button class="button" value="cancel" id="ask-cancel"></button><button class="button primary" value="ok" id="ask-ok"></button></div>
+  <label class="check ask-check hidden" id="ask-check"><input type="checkbox" id="ask-check-input"><span id="ask-check-label"></span></label>
+  <div class="row"><button class="button" value="cancel" id="ask-cancel"></button><button class="button hidden" value="alt" id="ask-alt"></button><button class="button primary" value="ok" id="ask-ok"></button></div>
 </form></dialog>
 <!-- 둘의 의견이 갈린 사진을 한 장씩 같이 정하는 창. 오른쪽은 둘 다 남기기, 왼쪽은 둘 다 빼기. 내용은 app.js의 openTogether가 채운다 -->
 <dialog id="together" class="together" tabindex="-1">
@@ -195,17 +211,9 @@
 <!-- 휴대폰을 가로로 돌렸을 때만 보인다 (styles.css) -->
 <div id="rotate-hint" role="status"><i class="ph ph-device-rotate" aria-hidden="true"></i><span data-i18n="rotateHint">Turn your phone upright to keep picking.</span></div>
 
-<!-- 그리스 펜슬 표시 원본 (복제해서 쓴다) -->
-<template id="mark-template">
-  <div class="mark keep" aria-hidden="true">
-    <svg viewBox="0 0 100 100" preserveAspectRatio="none"><path pathLength="1" d="M22 13 C 44 3, 82 4, 94 30 C 102 56, 88 90, 54 96 C 22 100, 3 80, 4 50 C 5 26, 22 10, 46 7 C 54 6, 60 7, 64 9"/></svg>
-  </div>
-</template>
-<template id="cross-template">
-  <div class="mark drop" aria-hidden="true">
-    <svg viewBox="0 0 100 100" preserveAspectRatio="none"><path pathLength="1" d="M10 12 C 34 36, 62 64, 91 90"/><path pathLength="1" d="M90 10 C 64 38, 36 62, 9 88"/></svg>
-  </div>
-</template>
+<!-- 남김·뺌 표시 원본 (복제해서 쓴다). 남김은 사진 둘레의 따뜻한 빛, 뺌은 사진이 흑백으로 바래며 어두워짐 (styles.css) -->
+<template id="mark-template"><div class="mark keep" aria-hidden="true"></div></template>
+<template id="cross-template"><div class="mark drop" aria-hidden="true"><img alt=""></div></template>
 
 <script type="module" src="./app.js"></script>
 </body>

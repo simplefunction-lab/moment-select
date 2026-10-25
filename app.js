@@ -68,6 +68,12 @@ document.documentElement.classList.toggle('touch', isTouchDevice);
 const supportsContainerQueries = CSS.supports('container-type: size');
 const canShareFiles = Boolean(navigator.canShare?.({ files: [new File([''], 'probe.jpg', { type: 'image/jpeg' })] })); // 공유 시트로 파일 저장 가능
 // 공유 시트 한 번에 넘길 장수. 실제 기기에서 한계를 재려고 주소에 ?shareBatch=N(1~500)을 붙이면 바꿀 수 있다
+// 이만큼 분석되면 '지금부터 고르기' (시험용: ?earlyStart=N), 고르는 동안에는 새로 분석된 사진을 이만큼씩 순서에 넣는다
+const EARLY_START = (() => {
+  const requested = Number(new URLSearchParams(location.search).get('earlyStart'));
+  return Number.isInteger(requested) && requested >= 2 && requested <= 1000 ? requested : 100;
+})();
+const EARLY_REFRESH = 50;
 const SHARE_BATCH_SIZE = (() => {
   const requested = Number(new URLSearchParams(location.search).get('shareBatch'));
   return Number.isInteger(requested) && requested >= 1 && requested <= 500 ? requested : 10;
@@ -114,7 +120,7 @@ const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시�
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
 const CACHE_VERSION = 'v5';             // 분석 방식이 바뀌면 올린다 (v5: 같은 사람 알아보기, 미적 점수)
-const APP_VERSION = 'v33';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
+const APP_VERSION = 'v34';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
 const DECODE_AHEAD = isTouchDevice ? 1 : 2;  // 분석하는 동안 미리 풀어 둘 다음 사진 수 (휴대폰은 메모리 때문에 1장)
 const ETA_WARMUP_PHOTOS = 3;             // 이만큼 분석하기 전에는 남은 시간을 보여주지 않는다 (첫 장은 모델 준비로 느리다)
 const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
@@ -180,6 +186,8 @@ const state = {
   rounds: { a: { distill: [], rescue: [] }, b: { distill: [], rescue: [] } }, // 이번 라운드에서 본 사진
   dividerSeen: { a: false, b: false },
   sentSampleCount: { a: 0, b: 0 }, // 서버로 이미 보낸 결정 수
+  skipped: { first: new Set(), distill: new Set(), rescue: new Set() }, // 필름 띠에서 앞으로 건너뛰어 맨 뒤로 미룬 차례 (단계마다, 이번 방문 동안)
+  deferred: { a: [], b: [] },    // 묶음에서 '나중에 보기'로 미룬 사진 (결정 없이 1차 셀렉 맨 뒤로)
   view: 'setup',
   categoryFilter: 'all',
   compareMode: false,
@@ -187,6 +195,8 @@ const state = {
   priorityIds: [],               // 되돌리거나 필름 띠에서 누른 사진을 맨 앞으로
   skippedFileCount: 0,
   analysisDone: false,
+  earlyPicking: false,           // 분석이 끝나기 전에 고르기를 시작했는지 (나머지는 뒤에서 분석)
+  analysisProgress: { done: 0, total: 0 },
   skipFaceAnalysis: false,
   people: [],                    // 같은 사람끼리 묶은 얼굴 [{key, faces:[{photoId, faceIndex}], photoIds:Set}] 많이 나온 순
   castKeys: null,                // 주인공으로 고른 사람 key 목록 (null이면 아직 안 정해서 자동으로 고른다)
@@ -277,7 +287,7 @@ function saveProjectNow() {
   if (!state.projectKey || !ownsProject) return Promise.resolve(false);
   return dbSet(`project:${state.projectKey}`, {
     settings: state.settings, reviewers: state.reviewers, models: state.models, rounds: state.rounds,
-    dividerSeen: state.dividerSeen, sentSampleCount: state.sentSampleCount, expandedGroups: [...state.expandedGroups],
+    dividerSeen: state.dividerSeen, sentSampleCount: state.sentSampleCount, expandedGroups: [...state.expandedGroups], deferred: state.deferred,
     castKeys: state.castKeys, organize: state.organize,
   });
 }
@@ -394,6 +404,8 @@ function resetProjectState() {
   state.rounds = { a: { distill: [], rescue: [] }, b: { distill: [], rescue: [] } };
   state.dividerSeen = { a: false, b: false };
   state.sentSampleCount = { a: 0, b: 0 };
+  state.skipped = { first: new Set(), distill: new Set(), rescue: new Set() };
+  state.deferred = { a: [], b: [] };
   state.expandedGroups = new Set();
   state.undoStack = [];
   state.priorityIds = [];
@@ -425,6 +437,7 @@ async function startWithEntries(folderName, imageEntries, source = { kind: 'hand
     for (const reviewerKey of Object.keys(state.models)) if (state.models[reviewerKey]?.theta?.length !== FEATURE_KEYS.length) state.models[reviewerKey] = null;
     state.rounds = savedProject.rounds ?? state.rounds;
     state.dividerSeen = savedProject.dividerSeen ?? state.dividerSeen;
+    state.deferred = savedProject.deferred ?? state.deferred;
     state.sentSampleCount = savedProject.sentSampleCount ?? state.sentSampleCount;
     state.expandedGroups = new Set(savedProject.expandedGroups ?? []);
     state.castKeys = savedProject.castKeys ?? null;
@@ -1192,29 +1205,58 @@ async function crossCheckFaceBackends() {
   console.info('face engine', JSON.stringify(faceEngine));
 }
 
+let waitingForAnalysis = false; // 분석된 사진을 다 봐서 다음 분석을 기다리는 화면인지
+// 고르는 동안 뒤에서 분석할 때: 손가락·마우스를 누르고 있거나 막 입력한 뒤(0.3초)에는 다음 사진 분석을 시작하지 않는다.
+// 얼굴 모델 한 번이 메인 스레드를 100ms 넘게 잡아서, 끄는 도중에 돌면 사진이 끊겨 움직인다
+let pointersDown = 0, lastInputAt = 0;
+addEventListener('pointerdown', () => { pointersDown++; lastInputAt = performance.now(); }, true);
+for (const type of ['pointerup', 'pointercancel']) addEventListener(type, () => { pointersDown = Math.max(0, pointersDown - 1); lastInputAt = performance.now(); }, true);
+addEventListener('keydown', () => { lastInputAt = performance.now(); }, true);
+async function waitForQuietInput() {
+  while (pointersDown > 0 || performance.now() - lastInputAt < 300) await new Promise((resolve) => setTimeout(resolve, 60));
+}
 async function analyzeAll() {
   state.analysisDone = false;
+  state.earlyPicking = false;
+  state.analysisProgress = { done: 0, total: state.photos.length };
+  $('#analyze-start-row').classList.add('hidden');
   $('#analyze-meter').style.width = '0%';
   await loadLibraries();
   await crossCheckFaceBackends();
   $('#analyze-meter').style.width = '0%';
   if (faceApi) $('#analyze-text').textContent = t('firstPhoto');
-  const totalCount = state.photos.length;
-  let finishedCount = 0;
+  const allPhotos = state.photos; // 분석 순서 (고르는 동안에는 state.photos가 분석된 사진만 담는다)
+  const totalCount = allPhotos.length;
+  let finishedCount = 0, integratedCount = 0;
+  // 분석된 사진으로 순서를 다시 만든다 (점수는 폴더 안 백분위라 사진이 늘면 다시 계산한다)
+  const integrate = () => {
+    state.photos = allPhotos.filter((photo) => photo.analysis && !photo.analysis.failed);
+    state.photoById = new Map(state.photos.map((photo) => [photo.id, photo]));
+    integratedCount = finishedCount;
+    buildScenes(); computeFeatures(); rescoreAll(); buildSimilarGroups(); buildUnits();
+  };
+  $('#analyze-start').onclick = () => {
+    if (state.earlyPicking || state.analysisDone) return;
+    state.earlyPicking = true;
+    integrate();
+    showToast(t('earlyStartToast', totalCount - finishedCount));
+    setView('first');
+  };
   let rateStartedAt = 0; // 남은 시간 계산 기준 (첫 장은 모델 준비 시간이 섞여 있어서 둘째 장부터 잰다)
   // 다음 사진 몇 장의 디코딩을 미리 시작한다 (브라우저가 별도 스레드에서 푼다). 원본 비트맵은 장당 100MB 가까이 되니 몇 장만
   const prepared = new Map();
   const prepareAhead = (index) => {
-    const photo = state.photos[index];
+    const photo = allPhotos[index];
     if (!photo || prepared.has(photo)) return;
     const promise = preparePhoto(photo);
     promise.catch(() => {}); // 실패는 그 사진을 분석할 때 처리한다
     prepared.set(photo, promise);
   };
-  for (const [index, photo] of state.photos.entries()) {
+  for (const [index, photo] of allPhotos.entries()) {
     for (let ahead = 0; ahead <= DECODE_AHEAD; ahead++) prepareAhead(index + ahead);
     const preparedPhoto = prepared.get(photo);
     prepared.delete(photo);
+    if (state.earlyPicking) await waitForQuietInput();
     try {
       await analyzeOne(photo, preparedPhoto);
     } catch (error) {
@@ -1227,8 +1269,22 @@ async function analyzeAll() {
       : Math.round(((performance.now() - rateStartedAt) / 1000 / (finishedCount - 1)) * (totalCount - finishedCount));
     $('#analyze-meter').style.width = `${(finishedCount / totalCount) * 100}%`;
     $('#analyze-text').textContent = t('analyzeProgress', { done: finishedCount, total: totalCount, seconds: remainingSeconds, faceOff: !faceApi });
+    state.analysisProgress = { done: finishedCount, total: totalCount };
+    if (!state.earlyPicking && finishedCount >= EARLY_START && finishedCount < totalCount) {
+      $('#analyze-start-hint').textContent = t('analyzeStartHint', totalCount - finishedCount); // 남은 장수는 분석될 때마다 줄어든다
+      $('#analyze-start-row').classList.remove('hidden');
+    }
+    if (state.earlyPicking) {
+      // 고르는 동안: 50장씩, 또는 분석된 사진을 다 봐서 기다리고 있으면 바로 순서에 넣는다 (보고 있는 사진은 바꾸지 않는다)
+      if (finishedCount < totalCount && (finishedCount - integratedCount >= EARLY_REFRESH || waitingForAnalysis)) {
+        integrate();
+        if (waitingForAnalysis) render(); else renderTopbar();
+      } else renderTopbar();
+    }
   }
   // 브라우저가 열지 못한 사진(HEIC 등)은 고를 수도 없으니 목록에서 뺀다
+  state.photos = allPhotos;
+  state.photoById = new Map(allPhotos.map((photo) => [photo.id, photo])); // 고르는 동안에는 분석된 사진만 담겨 있었다
   const unreadable = state.photos.filter((photo) => photo.analysis.failed);
   if (unreadable.length) {
     state.photos = state.photos.filter((photo) => !photo.analysis.failed);
@@ -1246,7 +1302,9 @@ async function analyzeAll() {
   saveProjectSoon();
   const skipNote = state.skippedFileCount ? t('skipNote', state.skippedFileCount) : '';
   showToast(t('analyzedToast', { count: state.photos.length, groups: state.groups.size, skipNote }));
-  setView('first');
+  $('#analyze-start-row').classList.add('hidden');
+  // 고르는 중에 끝났으면 화면은 그대로 두고 알리기만 한다 (기다리는 화면이었으면 이어서 그린다)
+  if (state.earlyPicking) { state.earlyPicking = false; render(); } else setView('first');
 }
 
 $('#skip-faces').onclick = () => {
@@ -1677,7 +1735,9 @@ function recordDecisions(changes, stage, preferences = []) {
     if (!winnersByLoser.has(loserId)) winnersByLoser.set(loserId, []);
     winnersByLoser.get(loserId).push({ id: winnerId, score: state.photoById.get(winnerId)?.score });
   }
+  const deferred = state.deferred[state.currentReviewer];
   for (const { id, status } of changes) {
+    if (deferred.includes(id)) deferred.splice(deferred.indexOf(id), 1);
     const previousDecision = decisionOf(id);
     undoEntry.previous.push({ id, decision: previousDecision ? structuredClone(previousDecision) : null });
     // score: 결정할 때 보이던 점수 (점수 적중률 측정용), lostTo: 이 사진 대신 고른 비슷한 사진
@@ -1713,6 +1773,8 @@ function undoLast() {
   for (const { id, decision } of undoEntry.previous) {
     if (decision) decisions[id] = decision; else delete decisions[id];
   }
+  const deferred = state.deferred[undoEntry.reviewerKey];
+  for (const id of undoEntry.deferred ?? []) if (deferred.includes(id)) deferred.splice(deferred.indexOf(id), 1);
   for (const { roundName, id } of undoEntry.roundMarks) {
     const seenIds = state.rounds[undoEntry.reviewerKey][roundName];
     const index = seenIds.indexOf(id);
@@ -1764,6 +1826,13 @@ function pickProbeUnit(pendingUnits) {
   return probe;
 }
 
+// 필름 띠에서 앞으로 건너뛴 차례는 지우지 않고 맨 뒤로 미룬다 (순서는 그대로)
+function skippedLast(items, keyOf, stage) {
+  const skipped = state.skipped[stage];
+  if (!skipped.size) return items;
+  return [...items.filter((item) => !skipped.has(keyOf(item))), ...items.filter((item) => skipped.has(keyOf(item)))];
+}
+const skippedCount = (items, keyOf, stage) => items.filter((item) => state.skipped[stage].has(keyOf(item))).length;
 function firstPassQueue() {
   const pending = state.units.filter((unit) => unit.ids.some((id) => !statusOf(id)) && unit.ids.some((id) => matchesCategory(state.photoById.get(id))));
   if (!state.settings.useScore) return bringPriorityFirst(pending, (unit) => unit.ids);
@@ -1777,7 +1846,11 @@ function firstPassQueue() {
   }
   const probe = recommended.length ? pickProbeUnit(pending) : null; // 추천 사진을 다 본 뒤에는 섞지 않는다
   if (probe && queue[0] !== probe) queue.splice(queue.indexOf(probe), 1), queue.unshift(probe);
-  return bringPriorityFirst(queue, (unit) => unit.ids);
+  // 나중에 보기로 미룬 사진만 남은 단위는 맨 뒤로
+  const deferred = state.deferred[state.currentReviewer];
+  const onlyDeferred = (unit) => unit.ids.every((id) => statusOf(id) || deferred.includes(id));
+  const ordered = skippedLast(queue, (unit) => unit.key, 'first');
+  return bringPriorityFirst([...ordered.filter((unit) => !onlyDeferred(unit)), ...ordered.filter(onlyDeferred)], (unit) => unit.ids);
 }
 function distillQueue() {
   const seenIds = state.rounds[state.currentReviewer].distill;
@@ -1787,14 +1860,14 @@ function distillQueue() {
   const queue = keepIds().map((id) => state.photoById.get(id))
     .filter((photo) => !seenIds.includes(photo.id) && matchesCategory(photo))
     .sort((left, right) => (sceneProtected.has(left.id) - sceneProtected.has(right.id)) || left.score - right.score);
-  return bringPriorityFirst(queue, (photo) => [photo.id]);
+  return bringPriorityFirst(skippedLast(queue, (photo) => photo.id, 'distill'), (photo) => [photo.id]);
 }
 function rescueQueue() {
   const seenIds = state.rounds[state.currentReviewer].rescue;
   const queue = dropIds().map((id) => state.photoById.get(id))
     .filter((photo) => !seenIds.includes(photo.id) && matchesCategory(photo))
     .sort((left, right) => right.score - left.score);
-  return bringPriorityFirst(queue, (photo) => [photo.id]);
+  return bringPriorityFirst(skippedLast(queue, (photo) => photo.id, 'rescue'), (photo) => [photo.id]);
 }
 function comparePair() {
   const queue = distillQueue();
@@ -1831,6 +1904,7 @@ function switchReviewer(reviewerKey, toastKey = 'switchedReviewer') {
   if (reviewerKey === state.currentReviewer) return;
   state.currentReviewer = reviewerKey;
   state.undoStack = [];
+  for (const skipped of Object.values(state.skipped)) skipped.clear(); // 건너뛴 차례는 사람마다 다르다
   rescoreAll();
   buildUnits();
   showToast(t(toastKey, escapeHtml(reviewer().name)), [], 2600);
@@ -1852,11 +1926,22 @@ const pickingAsTwo = () => state.settings.together || state.currentReviewer === 
 
 let previousKeepCount = null; // 직전에 그린 남긴 장수 (목표를 맞추는 순간을 알아보려고)
 function renderTopbar() {
-  const ready = state.analysisDone;
+  const ready = state.analysisDone || state.earlyPicking;
+  // 1차 셀렉에서 모든 사진을 한 번씩 정해야(남김이나 뺌) 줄이기·다시 보기·내보내기로 넘어간다. 분석이 끝나기 전에도 잠근다
+  const unreviewed = ready ? undecidedCount() + (state.analysisDone ? 0 : state.analysisProgress.total - state.photos.length) : 0;
+  $('#bg-analysis').classList.toggle('hidden', !state.earlyPicking);
+  if (state.earlyPicking) {
+    const { done, total } = state.analysisProgress;
+    $('#bg-analysis-text').textContent = t('bgAnalysis', { done, total });
+    $('#bg-analysis-meter').style.width = `${(done / total) * 100}%`;
+  }
   for (const button of document.querySelectorAll('#tabs button')) {
     const isCurrent = button.dataset.view === state.view || (state.view === 'analyze' && button.dataset.view === 'setup');
     if (isCurrent) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
-    if (button.dataset.view !== 'setup') button.disabled = !ready;
+    if (button.dataset.view === 'setup') continue;
+    const locked = button.dataset.view !== 'first' && unreviewed > 0;
+    button.disabled = !ready || locked;
+    if (locked) button.title = state.analysisDone ? t('tabLockedReview', unreviewed) : t('tabLockedAnalysis'); else button.removeAttribute('title');
   }
   const keepCount = ready ? keepIds().length : 0;
   const target = state.settings.target;
@@ -1930,7 +2015,9 @@ function naturalQueue(buildQueue) {
 }
 
 const FILMSTRIP_VISIBLE = 16;
+let filmstripEntries = []; // 지금 그린 필름 띠 항목 (누른 항목 앞의 차례를 건너뛴 것으로 표시할 때 쓴다)
 function renderFilmstrip(entries, currentIds = []) {
+  filmstripEntries = entries;
   // entries: [{ids, photo, count}] 원래 볼 순서. currentIds: 지금 무대에 떠 있는 사진
   const filmstrip = $('#filmstrip');
   const isCurrent = (entry) => entry.ids.some((id) => currentIds.includes(id));
@@ -1958,8 +2045,12 @@ function renderFilmstrip(entries, currentIds = []) {
 $('#filmstrip').onclick = (event) => {
   const button = event.target.closest('button[data-ids]');
   if (!button || button.classList.contains('current')) return;
-  // 맨 앞(원래 볼 차례) 사진을 누르면 따로 당겨 온 사진을 풀고 원래 순서로 돌아간다
-  state.priorityIds = button.dataset.order === '0' ? [] : JSON.parse(button.dataset.ids);
+  // 누른 사진부터 이어서 본다. 그 앞 차례는 지우지 않고 맨 뒤로 미룬다 (정한 뒤 처음으로 돌아가지 않는다)
+  const order = Number(button.dataset.order);
+  const skipped = state.skipped[state.view];
+  if (skipped) for (const entry of filmstripEntries.slice(0, order)) skipped.add(entry.key);
+  if (state.view === 'first' && filmstripEntries[order]?.unit && !filmstripEntries[order].unit.recommended) state.dividerSeen[state.currentReviewer] = true; // 구분선 너머로 건너뛰었으면 구분선은 본 것으로
+  state.priorityIds = [];
   render();
 };
 
@@ -1985,10 +2076,13 @@ function photoTagsHtml(photo, { showAdded }) {
 
 function renderPickView() {
   const mode = state.view;
+  waitingForAnalysis = false;
   $('#compare-toggle').classList.toggle('hidden', mode !== 'distill');
   $('#criteria-button').classList.toggle('hidden', !state.settings.useScore);
   $('#cast-button').classList.toggle('hidden', !state.settings.useScore || !state.people.length);
   $('#compare-toggle').setAttribute('aria-pressed', String(state.compareMode));
+  $('#view-count').classList.toggle('hidden', !wideEnough());
+  for (const button of document.querySelectorAll('#view-count button')) button.setAttribute('aria-checked', String(Number(button.dataset.count) === viewCount));
   const stage = $('#stage');
   const keepCount = keepIds().length;
   const target = state.settings.target;
@@ -1997,12 +2091,18 @@ function renderPickView() {
     renderFilters(state.photos);
     const queue = firstPassQueue();
     const remaining = queue.reduce((sum, unit) => sum + unit.ids.filter((id) => !statusOf(id)).length, 0);
-    setNotice(t('noticeFirst', { remaining, scored: state.settings.useScore }));
+    const skippedFirst = skippedCount(queue, (unit) => unit.key, 'first');
+    setNotice(t('noticeFirst', { remaining, scored: state.settings.useScore }) + (skippedFirst ? t('noticeSkipped', skippedFirst) : ''));
     const head = queue[0];
     renderFilmstrip(naturalQueue(firstPassQueue).filter((unit) => unit.type !== 'divider').map((unit) => {
       const members = unit.ids.map((id) => state.photoById.get(id));
-      return { ids: unit.ids, photo: members.find((photo) => photo.groupBest) ?? members[0], count: unit.ids.length };
+      return { key: unit.key, unit, ids: unit.ids, photo: members.find((photo) => photo.groupBest) ?? members[0], count: unit.ids.length };
     }), head?.ids ?? []);
+    if (!head && !state.analysisDone) {
+      waitingForAnalysis = true;
+      const { done, total } = state.analysisProgress;
+      return renderEmpty(stage, t('waitTitle'), t('waitBody', { rest: total - done }), []);
+    }
     if (!head) {
       const otherName = escapeHtml(state.reviewers[otherReviewerKey()].name);
       const handing = handOffPending();
@@ -2011,6 +2111,8 @@ function renderPickView() {
          { label: t('btnDistill'), primary: !handing && keepCount > target, run: () => setView('distill') }, { label: t('btnRescueDropped'), run: () => setView('rescue') }, { label: t('btnExport'), primary: !handing && keepCount <= target, run: () => setView('export') }]);
     }
     if (head.type === 'divider') return renderDivider(stage, head);
+    const firstPanels = multiIds('first', queue);
+    if (firstPanels) return renderMulti(stage, firstPanels, 'first');
     if (head.type === 'group') return renderBurst(stage, head);
     if (head.type === 'expanded') return renderExpanded(stage, head, queue);
     const headPhoto = state.photoById.get(head.ids[0]);
@@ -2029,15 +2131,17 @@ function renderPickView() {
       : keepCount < target
         ? t('noticeDistillUnder', { target, count: target - keepCount })
         : t('noticeDistillOk', target), keepCount > target);
-    renderFilmstrip(naturalQueue(distillQueue).map((photo) => ({ ids: [photo.id], photo, count: 1 })), queue[0] ? [queue[0].id] : []);
+    renderFilmstrip(naturalQueue(distillQueue).map((photo) => ({ key: photo.id, ids: [photo.id], photo, count: 1 })), queue[0] ? [queue[0].id] : []);
     if (state.compareMode) {
       const pair = comparePair();
       if (pair) return renderCompare(stage, pair);
     }
     const head = queue[0];
+    const distillPanels = head ? multiIds('distill', queue) : null;
+    if (distillPanels) return renderMulti(stage, distillPanels, 'distill');
     if (!head) {
       return renderEmpty(stage, t('distillDoneTitle'), t('distillDoneBody', keepCount),
-        [{ label: t('btnDistillAgain'), primary: keepCount > target, run: () => { state.rounds[state.currentReviewer].distill = []; saveProjectSoon(); render(); } },
+        [{ label: t('btnDistillAgain'), primary: keepCount > target, run: () => { state.rounds[state.currentReviewer].distill = []; state.skipped.distill.clear(); saveProjectSoon(); render(); } },
          { label: t('btnExport'), primary: keepCount <= target, run: () => setView('export') }]);
     }
     return renderSingle(stage, head, queue.slice(1, 3).map((photo) => photo.id), 'distill');
@@ -2047,10 +2151,12 @@ function renderPickView() {
   const queue = rescueQueue();
   setNotice(t('noticeRescue'));
   const head = queue[0];
-  renderFilmstrip(naturalQueue(rescueQueue).map((photo) => ({ ids: [photo.id], photo, count: 1 })), head ? [head.id] : []);
+  renderFilmstrip(naturalQueue(rescueQueue).map((photo) => ({ key: photo.id, ids: [photo.id], photo, count: 1 })), head ? [head.id] : []);
+  const rescuePanels = head ? multiIds('rescue', queue) : null;
+  if (rescuePanels) return renderMulti(stage, rescuePanels, 'rescue');
   if (!head) {
     return renderEmpty(stage, t('rescueDoneTitle'), t('rescueDoneBody', { keep: keepCount, target }),
-      [{ label: t('btnRescueAgain'), run: () => { state.rounds[state.currentReviewer].rescue = []; saveProjectSoon(); render(); } },
+      [{ label: t('btnRescueAgain'), run: () => { state.rounds[state.currentReviewer].rescue = []; state.skipped.rescue.clear(); saveProjectSoon(); render(); } },
        { label: keepCount > target ? t('btnDistill') : t('btnExport'), primary: true, run: () => setView(keepCount > target ? 'distill' : 'export') }]);
   }
   const rescueKeptLookalikes = similarKeptPhotos(head);
@@ -2120,17 +2226,12 @@ function renderDivider(stage, divider) {
   keepOnlyUrls([]);
   stage.innerHTML = `<div class="empty"><h2>${t('dividerTitle')}</h2>
     <p>${t('dividerBody', divider.count)}</p>
-    <div class="actions"><button class="button primary" id="divider-continue">${t('dividerContinue')}</button><button class="button" id="divider-drop">${t('dividerDrop')}</button></div></div>`;
-  $('#divider-continue').onclick = () => { state.dividerSeen[state.currentReviewer] = true; saveProjectSoon(); render(); };
-  $('#divider-drop').onclick = () => {
-    const pendingIds = state.units.filter((unit) => !unit.recommended).flatMap((unit) => unit.ids).filter((id) => !statusOf(id) && matchesCategory(state.photoById.get(id)));
-    recordDecisions(pendingIds.map((id) => ({ id, status: 'drop' })), 'first-bulk');
-    state.dividerSeen[state.currentReviewer] = true;
-    showToast(t('droppedRest', pendingIds.length), [{ label: t('undo'), run: undoLast }]);
-    render();
-  };
+    <div class="actions"><button class="button primary" id="divider-continue">${t('dividerContinue')}</button></div></div>`;
+  // 보지 않고 한꺼번에 빼는 버튼은 없다: 1차 셀렉에서는 모든 사진을 한 번씩 보고 남김·뺌을 정한다
+  const proceed = () => { state.dividerSeen[state.currentReviewer] = true; saveProjectSoon(); render(); };
+  $('#divider-continue').onclick = proceed;
   $('#controls').innerHTML = '';
-  currentKeys = null;
+  currentKeys = { right: proceed };
 }
 
 // ---------- 낱장 ----------
@@ -2160,26 +2261,14 @@ function renderSingle(stage, photo, preloadIds, stageName) {
   if (promotedPhotoId !== photo.id) motion(frame, { opacity: [0, 1], transform: ['translateY(14px) scale(.95)', 'translateY(0px) scale(1)'] }, { duration: 0.26, ease: [0.16, 1, 0.3, 1] });
   promotedPhotoId = null;
   const keepMark = cloneMark('keep'), dropMark = cloneMark('drop');
+  const dropImage = $('img', dropMark); // 뺌 표시는 같은 사진의 흑백 사본
+  dropImage.src = photo.thumbUrl;
   frame.append(keepMark, dropMark);
   const image = $('.photo img', frame);
-  fullImageUrl(photo).then((url) => { if (image.isConnected) image.src = url; });
+  fullImageUrl(photo).then((url) => { if (image.isConnected) { image.src = url; dropImage.src = url; } });
 
   const decide = (status) => {
-    if (stageName === 'distill') {
-      const undoEntry = status === 'drop' ? recordDecisions([{ id: photo.id, status: 'drop' }], 'distill') : emptyUndo();
-      if (status === 'keep') state.undoStack.push(undoEntry);
-      markRoundSeen('distill', [photo.id], undoEntry);
-    } else if (stageName === 'rescue') {
-      const undoEntry = status === 'keep' ? recordDecisions([{ id: photo.id, status: 'keep' }], 'rescue') : emptyUndo();
-      if (status === 'drop') state.undoStack.push(undoEntry);
-      markRoundSeen('rescue', [photo.id], undoEntry);
-      const keepCount = keepIds().length;
-      if (status === 'keep' && keepCount > state.settings.target) {
-        showToast(t('rescuedOver', keepCount - state.settings.target), [{ label: t('goDistill'), run: () => setView('distill') }], 5500);
-      }
-    } else {
-      recordDecisions([{ id: photo.id, status }], 'first');
-    }
+    decidePhoto(photo, status, stageName);
     state.priorityIds = [];
     render();
   };
@@ -2217,6 +2306,163 @@ function addCompareBackBar(stage, photo) {
       <button class="button" id="kept-compare-back">${t('keptCompareBack')}</button>
     </div>`);
   $('#kept-compare-back').onclick = () => { singleViewIds.delete(photo.id); render(); };
+}
+
+// 사진 한 장을 단계에 맞게 정한다 (1차 셀렉: 남김/뺌, 줄이기: 빼기만 기록하고 남김은 '봤음', 다시 보기: 살리기만 기록)
+function decidePhoto(photo, status, stageName) {
+  if (stageName === 'distill') {
+    const undoEntry = status === 'drop' ? recordDecisions([{ id: photo.id, status: 'drop' }], 'distill') : statusOf(photo.id) === 'drop' ? recordDecisions([{ id: photo.id, status: 'keep' }], 'distill') : emptyUndo();
+    if (!state.undoStack.includes(undoEntry)) state.undoStack.push(undoEntry);
+    markRoundSeen('distill', [photo.id], undoEntry);
+  } else if (stageName === 'rescue') {
+    const undoEntry = status === 'keep' ? recordDecisions([{ id: photo.id, status: 'keep' }], 'rescue') : statusOf(photo.id) === 'keep' ? recordDecisions([{ id: photo.id, status: 'drop' }], 'rescue') : emptyUndo();
+    if (!state.undoStack.includes(undoEntry)) state.undoStack.push(undoEntry);
+    markRoundSeen('rescue', [photo.id], undoEntry);
+    const keepCount = keepIds().length;
+    if (status === 'keep' && keepCount > state.settings.target) {
+      showToast(t('rescuedOver', keepCount - state.settings.target), [{ label: t('goDistill'), run: () => setView('distill') }], 5500);
+    }
+  } else {
+    recordDecisions([{ id: photo.id, status }], 'first');
+  }
+}
+
+// ---------- 1장·2장·3장 나란히 보기 (태블릿·PC) ----------
+// 다음 차례 2~3장을 칸마다 따로 확대하며 비교하고 칸마다 남김·뺌. 모든 칸을 정하면 다음 2~3장으로
+const wideEnough = () => matchMedia('(min-width: 768px)').matches;
+let viewCount = 1;
+dbGet('viewCount').then((count) => { if (count) { viewCount = count; if (PICK_VIEWS.includes(state.view)) render(); } });
+let multiSet = null;        // 지금 칸에 올린 사진 {view, count, ids}
+let multiFocus = 0;         // 키보드로 고른 칸
+const panelZoom = new Map(); // 사진 id에서 확대 상태로 (다른 칸을 정해 다시 그려도 유지)
+$('#view-count').onclick = (event) => {
+  const button = event.target.closest('button[data-count]');
+  if (!button) return;
+  viewCount = Number(button.dataset.count);
+  dbSet('viewCount', viewCount);
+  multiSet = null; multiFocus = 0;
+  render();
+};
+// 칸에서 이 사진을 정했는지와 어느 쪽인지 (단계마다 기록 방식이 다르다)
+function panelStatus(id, stageName) {
+  const seen = stageName !== 'first' && state.rounds[state.currentReviewer][stageName].includes(id);
+  const status = statusOf(id);
+  if (stageName === 'first') return status;
+  if (stageName === 'distill') return status === 'drop' ? 'drop' : seen ? 'keep' : null;
+  return status === 'keep' ? 'keep' : seen ? 'drop' : null;
+}
+// 1차 셀렉에서는 낱장과 한 장씩 보기로 푼 묶음 사진을 칸에 올린다. 사이에 낀 연사 묶음은 건너뛰고 모은다
+// (그 묶음은 칸을 다 정하면 바로 묶음 화면으로 나온다). 구분선은 넘지 않는다
+function multiCandidates(stageName, queue) {
+  if (stageName !== 'first') return queue.map((photo) => photo.id);
+  const ids = [];
+  for (const unit of queue) {
+    if (unit.type === 'divider') break;
+    if (unit.type === 'group') { if (!ids.length) break; continue; }
+    if (unit.type === 'single') ids.push(unit.ids[0]);
+    else if (unit.type === 'expanded') ids.push(...unit.ids.filter((id) => !statusOf(id)));
+    if (ids.length >= 3) break;
+  }
+  return ids;
+}
+// 나란히 보기를 쓸지 정하고 칸에 올릴 사진을 고른다. 쓰지 않으면 null
+function multiIds(stageName, queue) {
+  if (viewCount < 2 || !wideEnough()) { multiSet = null; return null; }
+  const reuse = multiSet && multiSet.view === stageName && multiSet.count === viewCount
+    && multiSet.ids.some((id) => !panelStatus(id, stageName))
+    && state.priorityIds.every((id) => multiSet.ids.includes(id));
+  if (!reuse) {
+    const ids = multiCandidates(stageName, queue).slice(0, viewCount);
+    if (ids.length < 2) { multiSet = null; return null; }
+    multiSet = { view: stageName, count: viewCount, ids };
+    multiFocus = 0;
+  }
+  return multiSet.ids;
+}
+function renderMulti(stage, ids, stageName) {
+  stagePhotoId = null;
+  keepOnlyUrls(ids);
+  const photos = ids.map((id) => state.photoById.get(id));
+  if (multiFocus >= ids.length || panelStatus(ids[multiFocus], stageName)) multiFocus = Math.max(0, ids.findIndex((id) => !panelStatus(id, stageName)));
+  stage.innerHTML = `<div class="panels" style="--n:${ids.length}">${photos.map((photo, index) => {
+    const status = panelStatus(photo.id, stageName);
+    return `
+    <div class="panel${index === multiFocus ? ' focused' : ''}" data-id="${escapeHtml(photo.id)}">
+      <div class="panel-photo">
+        <div class="frame" style="--ratio:${photo.width && photo.height ? photo.width / photo.height : 1.5}">
+          <div class="photo"><img src="${photo.thumbUrl}" alt="${escapeHtml(photo.name)}"></div>
+          <div class="tags">${photoTagsHtml(photo, { showAdded: stageName === 'distill' })}</div>
+          <div class="panel-zoom"><button type="button" data-zoom="-1" aria-label="${t('zoomOut')}">−</button><span class="num">100%</span><button type="button" data-zoom="1" aria-label="${t('zoomIn')}">+</button></div>
+        </div>
+      </div>
+      <div class="panel-decide">
+        <span class="panel-key num">${index + 1}</span>
+        <button class="button" data-decide="drop" aria-pressed="${status === 'drop'}">${t('drop')}</button>
+        <button class="button" data-decide="keep" aria-pressed="${status === 'keep'}">${stageName === 'distill' ? t('keepStill') : t('keep')}</button>
+      </div>
+    </div>`; }).join('')}</div>`;
+  const panels = [...stage.querySelectorAll('.panel')];
+  panels.forEach((panel, index) => {
+    const photo = photos[index];
+    const frame = $('.frame', panel), image = $('.photo img', frame);
+    const keepMark = cloneMark('keep'), dropMark = cloneMark('drop');
+    $('img', dropMark).src = photo.thumbUrl;
+    frame.append(keepMark, dropMark);
+    const status = panelStatus(photo.id, stageName);
+    if (status) (status === 'keep' ? keepMark : dropMark).classList.add('drawn');
+    fullImageUrl(photo).then((url) => { if (image.isConnected) { image.src = url; $('img', dropMark).src = url; } });
+    const zoom = createZoom(frame, image);
+    const label = $('.panel-zoom .num', frame);
+    const showScale = () => { label.textContent = `${Math.round(zoom.scale * 100)}%`; panelZoom.set(photo.id, zoom.state); };
+    zoom.restore(panelZoom.get(photo.id)); showScale();
+    const local = (event) => { const rect = frame.getBoundingClientRect(); return [event.clientX - rect.left, event.clientY - rect.top]; };
+    // 휠·트랙패드 핀치로 확대, 끌어서 이동, 두 번 눌러 2.5배, 두 손가락 핀치
+    frame.addEventListener('wheel', (event) => { event.preventDefault(); const [x, y] = local(event); zoom.zoomAt(zoom.scale * Math.exp(-event.deltaY / (event.ctrlKey ? 100 : 400)), x, y); showScale(); }, { passive: false });
+    const pointers = new Map();
+    let pinch = null, last = null;
+    frame.addEventListener('pointerdown', (event) => {
+      if (event.target.closest('.panel-zoom')) return;
+      pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      frame.setPointerCapture(event.pointerId);
+      if (pointers.size === 2) { const [a, b] = [...pointers.values()]; pinch = { distance: Math.hypot(a.x - b.x, a.y - b.y) || 1, scale: zoom.scale }; }
+      last = { x: event.clientX, y: event.clientY };
+      multiFocus = index; panels.forEach((other, i) => other.classList.toggle('focused', i === index));
+    });
+    frame.addEventListener('pointermove', (event) => {
+      if (!pointers.has(event.pointerId)) return;
+      pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      if (pinch && pointers.size === 2) { const [a, b] = [...pointers.values()]; const rect = frame.getBoundingClientRect(); zoom.zoomAt(pinch.scale * (Math.hypot(a.x - b.x, a.y - b.y) / pinch.distance), (a.x + b.x) / 2 - rect.left, (a.y + b.y) / 2 - rect.top); showScale(); return; }
+      if (last && pointers.size === 1) { zoom.panBy(event.clientX - last.x, event.clientY - last.y); last = { x: event.clientX, y: event.clientY }; showScale(); }
+    });
+    const release = (event) => { pointers.delete(event.pointerId); if (pointers.size < 2) pinch = null; if (!pointers.size) last = null; };
+    frame.addEventListener('pointerup', release); frame.addEventListener('pointercancel', release);
+    frame.addEventListener('dblclick', (event) => { if (zoom.scale > 1) zoom.reset(); else { const [x, y] = local(event); zoom.zoomAt(ZOOM_DOUBLE_TAP, x, y, true); } showScale(); });
+    for (const button of panel.querySelectorAll('[data-zoom]')) button.onclick = () => { zoom.zoomAt(zoom.scale * (button.dataset.zoom === '1' ? 1.5 : 1 / 1.5), frame.clientWidth / 2, frame.clientHeight / 2, true); showScale(); };
+    for (const button of panel.querySelectorAll('[data-decide]')) button.onclick = () => decidePanel(index, button.dataset.decide);
+    panel.zoomApi = zoom;
+  });
+  const decidePanel = (index, status) => {
+    decidePhoto(photos[index], status, stageName);
+    state.priorityIds = [];
+    // 다음으로 정하지 않은 칸에 초점 (모두 정하면 다음 2~3장)
+    const next = ids.findIndex((id, i) => i > index && !panelStatus(id, stageName));
+    multiFocus = next >= 0 ? next : Math.max(0, ids.findIndex((id) => !panelStatus(id, stageName)));
+    render();
+  };
+  $('#controls').innerHTML = `${undoButtonHtml()}<span class="hint panel-hint">${t('panelsHint')}</span>`;
+  $('#act-undo').onclick = undoLast;
+  const focusPanel = (index) => { if (index < ids.length) { multiFocus = index; panels.forEach((panel, i) => panel.classList.toggle('focused', i === index)); } };
+  const toggleFaceZoom = () => {
+    const zoom = panels[multiFocus]?.zoomApi;
+    if (!zoom) return;
+    if (zoom.scale > 1) { zoom.reset(); } else {
+      const face = [...mainFacesOf(photos[multiFocus])].sort((left, right) => right.box.h - left.box.h)[0];
+      zoom.zoomTo(FACE_ZOOM, face ? face.box.x + face.box.w / 2 : 0.5, face ? face.box.y + face.box.h / 2 : 0.5);
+    }
+    panelZoom.set(photos[multiFocus].id, zoom.state);
+    $('.panel-zoom .num', panels[multiFocus]).textContent = `${Math.round(zoom.scale * 100)}%`;
+  };
+  currentKeys = { left: () => decidePanel(multiFocus, 'drop'), right: () => decidePanel(multiFocus, 'keep'), number: (digit) => focusPanel(digit - 1), zoom: toggleFaceZoom };
 }
 
 // ---------- 한 장씩 보기로 푼 연사 묶음 ----------
@@ -2336,6 +2582,9 @@ function createZoom(frame, image) {
     },
     panBy(dx, dy) { if (scale === 1) return; x += dx; y += dy; clamp(); apply(false); },
     reset(animated = true) { scale = 1; x = 0; y = 0; apply(animated); },
+    // 나란히 보기에서 다른 칸을 정해 화면을 다시 그려도 확대한 칸이 그대로 남게 한다
+    get state() { return { scale, x, y }; },
+    restore(saved) { if (!saved) return; ({ scale, x, y } = saved); clamp(); apply(false); },
   };
 }
 
@@ -2513,28 +2762,47 @@ function renderBurst(stage, unit) {
     shot.ondblclick = (event) => { event.preventDefault(); openViewer(state.photoById.get(shot.dataset.id)); };
   }
   $('#burst-expand').onclick = () => { state.expandedGroups.add(unit.key); buildUnits(); saveProjectSoon(); render(); };
-  const confirm = () => {
-    // 묶음 사진은 고른 대로, 묶음 밖 남긴 사진은 선택을 풀었을 때만 뺀다
+  const confirm = async (askedRest = null) => {
+    // 고른 사진이 있고, 고르지 않았는데 아직 정하지 않은 묶음 사진이 있으면 그 사진들을 어떻게 할지 정한다 (매번 묻거나 기억한 답)
+    const restIds = groupMembers.filter((photo) => !burstSelection.selected.has(photo.id) && !statusOf(photo.id)).map((photo) => photo.id);
+    let rest = 'drop';
+    if (burstSelection.selected.size && restIds.length) {
+      rest = askedRest ?? burstRestChoice;
+      if (rest === 'ask') {
+        const answer = await askDialog({ title: t('restAskTitle', { kept: burstSelection.selected.size, rest: restIds.length }), body: t('restAskBody'), confirm: t('restDrop', restIds.length), alt: t('restLater'), cancel: t('restBack'), check: t('restRemember'), kind: 'burst-rest' });
+        if (!answer.ok && !answer.alt) return; // 돌아가기: 아무것도 정하지 않는다
+        rest = answer.ok ? 'drop' : 'later';
+        if (answer.checked) setBurstRestChoice(rest);
+      }
+    }
+    // 묶음 사진은 고른 대로, 묶음 밖 남긴 사진은 선택을 풀었을 때만 뺀다. 나중에 보기면 고르지 않은 사진은 정하지 않는다
     const changes = members
       .filter((photo) => groupIdSet.has(photo.id) || !burstSelection.selected.has(photo.id))
+      .filter((photo) => rest !== 'later' || !restIds.includes(photo.id))
       .map((photo) => ({ id: photo.id, status: burstSelection.selected.has(photo.id) ? 'keep' : 'drop' }));
     // 고른 사진은 안 고른 사진마다 한 번씩 이긴 것으로 기록 (다 뺐으면 비교 정보가 없다)
     const winnerIds = members.filter((photo) => burstSelection.selected.has(photo.id)).map((photo) => photo.id);
     const loserIds = changes.filter((change) => change.status === 'drop').map((change) => change.id);
-    recordDecisions(changes, 'first-burst', winnerIds.flatMap((winnerId) => loserIds.map((loserId) => ({ winnerId, loserId }))));
+    const undoEntry = recordDecisions(changes, 'first-burst', winnerIds.flatMap((winnerId) => loserIds.map((loserId) => ({ winnerId, loserId }))));
+    if (rest === 'later') {
+      state.deferred[state.currentReviewer].push(...restIds);
+      undoEntry.deferred = restIds;
+      showToast(t('restLaterToast', restIds.length), [{ label: t('undo'), run: undoLast }]);
+    }
     burstSelection = { key: null, selected: new Set() };
+    saveProjectSoon();
     render();
   };
-  const dropAll = () => { burstSelection.selected.clear(); confirm(); };
+  const dropAll = () => { burstSelection.selected.clear(); confirm('drop'); };
   $('#controls').innerHTML = `
     <button class="button decide" id="act-dropall"><i class="ph ph-x"></i>${t('dropAll')}<kbd>←</kbd></button>
     ${undoButtonHtml()}
     <button class="button decide keep" id="act-confirm"></button>`;
   updateConfirm();
   $('#act-dropall').onclick = dropAll;
-  $('#act-confirm').onclick = confirm;
+  $('#act-confirm').onclick = () => confirm();
   $('#act-undo').onclick = undoLast;
-  currentKeys = { left: dropAll, right: confirm, number: (digit) => { const photo = members[digit - 1]; if (photo) toggleMember(photo.id); } };
+  currentKeys = { left: dropAll, right: () => confirm(), number: (digit) => { const photo = members[digit - 1]; if (photo) toggleMember(photo.id); } };
 }
 
 // ---------- 이미 남긴 비슷한 사진과 비교 ----------
@@ -2874,16 +3142,29 @@ document.addEventListener('keydown', (event) => {
    ===================================================================== */
 // ---------- 묻고 답 받는 창 ----------
 // 돌려주는 값: {ok: 확인을 눌렀는지, value: 입력칸 값}
-function askDialog({ title, body, input = null, confirm, cancel }) {
+// 묶음에서 고르지 않은 사진: ask(매번 묻기) | drop(빼기) | later(나중에 보기). 기기에 기억한다
+let burstRestChoice = 'ask';
+dbGet('burstRest').then((choice) => { if (choice) { burstRestChoice = choice; $('#burst-rest-input').value = choice; } });
+function setBurstRestChoice(choice) { burstRestChoice = choice; $('#burst-rest-input').value = choice; dbSet('burstRest', choice); }
+$('#burst-rest-input').onchange = (event) => setBurstRestChoice(event.target.value);
+
+// alt: 세 번째 선택지 버튼, check: '다음부터 묻지 않기' 같은 체크 상자
+function askDialog({ title, body, input = null, confirm, cancel, alt = null, check = null, kind = '' }) {
   const dialog = $('#ask');
+  dialog.dataset.kind = kind; // 어떤 질문인지 (시험에서 구분)
   $('#ask-title').textContent = title;
   $('#ask-body').innerHTML = body;
   $('#ask-field').classList.toggle('hidden', !input);
   if (input) { $('#ask-label').textContent = input.label; $('#ask-input').value = input.value; }
+  $('#ask-alt').classList.toggle('hidden', !alt);
+  if (alt) $('#ask-alt').textContent = alt;
+  $('#ask-check').classList.toggle('hidden', !check);
+  $('#ask-check-input').checked = false;
+  if (check) $('#ask-check-label').textContent = check;
   $('#ask-ok').textContent = confirm;
   $('#ask-cancel').textContent = cancel;
   return new Promise((resolve) => {
-    dialog.addEventListener('close', () => resolve({ ok: dialog.returnValue === 'ok', value: $('#ask-input').value }), { once: true });
+    dialog.addEventListener('close', () => resolve({ ok: dialog.returnValue === 'ok', alt: dialog.returnValue === 'alt', value: $('#ask-input').value, checked: $('#ask-check-input').checked }), { once: true });
     dialog.returnValue = '';
     dialog.showModal();
     (input ? $('#ask-input') : $('#ask-ok')).focus();
