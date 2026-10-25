@@ -8,6 +8,7 @@
 
 import { t, num, getLanguage, setLanguage, applyStaticText, presetText, featureLabel, categoryLabel, allExportPrefixes, isDefaultName } from './i18n.js';
 import { buildAestheticModel, scoreAesthetic, AESTHETIC_INPUT } from './aesthetic.js';
+import { measurePixels, toGrayscale, laplacianVariance, luminanceStats } from './pixel-math.js';
 // 스와이프 물리(스프링)와 목표 장수 축하. 둘 다 앱과 함께 배포한다 (vendor/LICENSES.txt)
 import { animate } from './vendor/motion/motion-animate.mjs';
 import { create as createConfetti } from './vendor/confetti/confetti.module.mjs';
@@ -101,8 +102,6 @@ const EYE_BLINK_CLOSED = 0.5;             // 정밀 모델의 eyeBlinkLeft, eyeB
 const EYE_MESH_MIN_FACE_PX = 40;          // 정밀 모델로 볼 얼굴의 최소 높이 (분석용 크기 기준)
 const EYE_MESH_MAX_FACES = 6;             // 사진마다 정밀 모델로 볼 큰 얼굴 수
 const EYE_MESH_CROP = 1.8;                // 얼굴 상자의 이 배수만큼 잘라서 넘긴다
-const FOCUS_GRID = 4;                     // 초점 부분을 찾으려고 사진을 4x4 칸으로 나눈다
-const FOCUS_TOP_TILES = 3;                // 가장 선명한 3칸 평균을 '초점 맞은 부분 선명도'로 쓴다
 const SIMILAR_HASH_DISTANCE = 12;       // dHash 차이가 이 이하면 바로 비슷한 컷
 const SIMILAR_HASH_LOOSE = 22;          // 이 이하이면서 작은 흑백 이미지 상관도가 높으면 비슷한 컷 (구도가 조금 바뀐 경우)
 const SIMILAR_CORRELATION = 0.6;        // 16x12 흑백 이미지 상관도 기준
@@ -115,15 +114,12 @@ const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시�
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
 const CACHE_VERSION = 'v5';             // 분석 방식이 바뀌면 올린다 (v5: 같은 사람 알아보기, 미적 점수)
-const APP_VERSION = 'v32';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
-const ANALYZE_SHEET_MAX = 8;             // 분석 화면 한 줄에 보여줄 최근 썸네일 수 (요소와 메모리가 늘지 않게)
-const ANALYZE_SHEET_EVERY_MS = 250;      // 썸네일 줄은 이 간격보다 자주 바꾸지 않는다 (빠르게 분석될 때 화면 일을 줄인다)
+const APP_VERSION = 'v33';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
 const DECODE_AHEAD = isTouchDevice ? 1 : 2;  // 분석하는 동안 미리 풀어 둘 다음 사진 수 (휴대폰은 메모리 때문에 1장)
 const ETA_WARMUP_PHOTOS = 3;             // 이만큼 분석하기 전에는 남은 시간을 보여주지 않는다 (첫 장은 모델 준비로 느리다)
 const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
 const DARK_RETRY_LUMINANCE = 100;        // 평균 밝기가 이보다 어두운데 얼굴을 못 찾으면 밝게 보정해서 한 번 더 찾는다
 const DARK_RETRY_THRESHOLD = 0.35;       // 다시 찾을 때의 검출 기준 (기본 0.45보다 조금 너그럽게)
-const NOISE_LAPLACIAN_GAIN = 0.40625;      // 노이즈 표준편차 σ가 흐린 라플라시안 분산에 더하는 양은 약 0.406σ² (커널 계수 제곱합)
 // 같은 사람 알아보기 (주인공)
 const DESCRIPTOR_MAX_FACES = 4;          // 사진마다 큰 얼굴 몇 개까지 '누구인지' 계산할지 (얼굴 인식은 무거워서)
 const SAME_PERSON_DISTANCE = 0.55;       // 얼굴 특징 거리(유클리드)가 이보다 가까우면 같은 사람 (face-api 권장 0.6보다 조금 엄격)
@@ -865,88 +861,6 @@ function drawScaled(bitmap, longSide, canvas, context) {
   context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
 }
 
-function toGrayscale(context, width, height) {
-  const rgba = context.getImageData(0, 0, width, height).data;
-  const gray = new Float32Array(width * height); // 픽셀 밝기 0~255
-  for (let rgbaIndex = 0, pixelIndex = 0; rgbaIndex < rgba.length; rgbaIndex += 4, pixelIndex++) {
-    gray[pixelIndex] = 0.299 * rgba[rgbaIndex] + 0.587 * rgba[rgbaIndex + 1] + 0.114 * rgba[rgbaIndex + 2];
-  }
-  return gray;
-}
-
-// 3x3 가우시안으로 살짝 흐리게: 픽셀 단위 노이즈는 줄고 실제 경계는 남는다
-function gaussianSmooth(gray, width, height) {
-  const smooth = new Float32Array(gray.length);
-  for (let y = 1; y < height - 1; y++) {
-    for (let x = 1; x < width - 1; x++) {
-      const index = y * width + x;
-      smooth[index] = (
-        gray[index - width - 1] + 2 * gray[index - width] + gray[index - width + 1] +
-        2 * gray[index - 1] + 4 * gray[index] + 2 * gray[index + 1] +
-        gray[index + width - 1] + 2 * gray[index + width] + gray[index + width + 1]) / 16;
-    }
-  }
-  return smooth;
-}
-
-// 라플라시안 분산: 경계가 또렷할수록 커진다. 흐린 영상에 적용해서 노이즈에 덜 속게 한다
-function laplacianVariance(image, width, height, left = 0, top = 0, right = width, bottom = height) {
-  const x0 = Math.max(2, Math.floor(left)), x1 = Math.min(width - 2, Math.ceil(right));
-  const y0 = Math.max(2, Math.floor(top)), y1 = Math.min(height - 2, Math.ceil(bottom));
-  let sum = 0, sumOfSquares = 0, sampleCount = 0;
-  for (let y = y0; y < y1; y++) {
-    for (let x = x0; x < x1; x++) {
-      const index = y * width + x;
-      const laplacian = 4 * image[index] - image[index - 1] - image[index + 1] - image[index - width] - image[index + width];
-      sum += laplacian; sumOfSquares += laplacian * laplacian; sampleCount++;
-    }
-  }
-  if (!sampleCount) return 0;
-  const mean = sum / sampleCount;
-  return sumOfSquares / sampleCount - mean * mean;
-}
-
-// 초점 맞은 부분 선명도: 4x4 칸 중 가장 선명한 3칸의 평균. 배경을 일부러 흐리게 한 사진도 손해 보지 않는다
-function focusSharpness(smooth, width, height, noiseFloor) {
-  const tileValues = [];
-  for (let row = 0; row < FOCUS_GRID; row++) {
-    for (let column = 0; column < FOCUS_GRID; column++) {
-      tileValues.push(Math.max(0, laplacianVariance(smooth, width, height,
-        (column * width) / FOCUS_GRID, (row * height) / FOCUS_GRID, ((column + 1) * width) / FOCUS_GRID, ((row + 1) * height) / FOCUS_GRID) - noiseFloor));
-    }
-  }
-  tileValues.sort((left, right) => right - left);
-  return tileValues.slice(0, FOCUS_TOP_TILES).reduce((sum, value) => sum + value, 0) / FOCUS_TOP_TILES;
-}
-
-// 노이즈 추정 (Immerkær 1996): 경계 성분을 지우는 3x3 마스크의 절댓값 평균으로 노이즈 표준편차를 추정
-function noiseSigma(gray, width, height) {
-  let total = 0;
-  for (let y = 1; y < height - 1; y++) {
-    for (let x = 1; x < width - 1; x++) {
-      const index = y * width + x;
-      total += Math.abs(
-        gray[index - width - 1] - 2 * gray[index - width] + gray[index - width + 1]
-        - 2 * gray[index - 1] + 4 * gray[index] - 2 * gray[index + 1]
-        + gray[index + width - 1] - 2 * gray[index + width] + gray[index + width + 1]);
-    }
-  }
-  return Math.sqrt(Math.PI / 2) * total / (6 * (width - 2) * (height - 2));
-}
-
-function luminanceStats(gray, width, left = 0, top = 0, right = width, bottom = gray.length / width) {
-  let total = 0, brightClipped = 0, darkClipped = 0, sampleCount = 0;
-  for (let y = Math.floor(top); y < Math.floor(bottom); y++) {
-    for (let x = Math.floor(left); x < Math.floor(right); x++) {
-      const value = gray[y * width + x];
-      total += value; sampleCount++;
-      if (value >= 250) brightClipped++;
-      else if (value <= 5) darkClipped++;
-    }
-  }
-  return { mean: total / Math.max(1, sampleCount), brightClip: brightClipped / Math.max(1, sampleCount), darkClip: darkClipped / Math.max(1, sampleCount) };
-}
-
 // 1024px를 한 번에 9x8이나 16x12로 줄이면 픽셀 몇 개만 집어오는 앨리어싱이 생겨 비교값이 흔들린다.
 // 반씩 여러 번 줄여서 64px 근처의 부드러운 사본을 만든 뒤 그것을 작은 크기로 줄인다.
 const smallCanvas = document.createElement('canvas');
@@ -1137,9 +1051,11 @@ async function faceDescriptors(sourceCanvas, detections, imageHeight) {
   try {
     // 랜드마크로 기울기를 바로잡은 얼굴 영역을 잘라서 계산한다 (face-api가 내부에서 하는 방식과 같다)
     const faceCanvases = await faceApi.extractFaces(sourceCanvas, chosen.map(({ detection }) => detection.alignedRect));
+    // 얼굴 여러 개를 한 번에 넘긴다 (GPU에 한 번만 다녀온다)
+    const computed = await faceApi.computeFaceDescriptor(faceCanvases.length === 1 ? faceCanvases[0] : faceCanvases);
+    const descriptors = faceCanvases.length === 1 ? [computed] : computed;
     for (let order = 0; order < chosen.length; order++) {
-      const descriptor = await faceApi.computeFaceDescriptor(faceCanvases[order]);
-      result.set(chosen[order].index, Array.from(descriptor, (value) => Math.round(value * 1000) / 1000));
+      result.set(chosen[order].index, Array.from(descriptors[order], (value) => Math.round(value * 1000) / 1000));
     }
   } catch (error) {
     console.warn('face descriptor failed', error);
@@ -1155,7 +1071,7 @@ function decodeInWorker(file) {
   if (!decodeWorkers.length) {
     if (typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined' || !('convertToBlob' in OffscreenCanvas.prototype)) return null;
     for (let index = 0; index < DECODE_AHEAD + 1; index++) {
-      const worker = new Worker('./decode-worker.js');
+      const worker = new Worker('./decode-worker.js', { type: 'module' });
       worker.onmessage = ({ data }) => {
         const job = decodeJobs.get(data.id);
         decodeJobs.delete(data.id);
@@ -1219,13 +1135,10 @@ async function analyzeOne(photo, prepared = preparePhoto(photo)) {
   }
 
   const { width, height } = analysisCanvas;
-  const gray = toGrayscale(analysisContext, width, height);
-  const smooth = gaussianSmooth(gray, width, height);
-  const noise = noiseSigma(gray, width, height);
-  const noiseFloor = NOISE_LAPLACIAN_GAIN * noise * noise; // 노이즈만으로 생기는 라플라시안 분산
-  const light = luminanceStats(gray, width);
+  // 워커가 분석용 그림을 만들면서 화소 계산까지 해 왔으면 그대로 쓴다 (같은 그림, 같은 코드)
+  const { gray, smooth, noise, noiseFloor, light, focusSharpness } = result.pixels ?? measurePixels(analysisContext, width, height);
   photo.analysis = {
-    focusSharpness: focusSharpness(smooth, width, height, noiseFloor),
+    focusSharpness,
     noise,
     light,
     hash: (prepareSmallCopy(), differenceHash()),
@@ -1282,7 +1195,6 @@ async function crossCheckFaceBackends() {
 async function analyzeAll() {
   state.analysisDone = false;
   $('#analyze-meter').style.width = '0%';
-  $('#analyze-sheet').innerHTML = '';
   await loadLibraries();
   await crossCheckFaceBackends();
   $('#analyze-meter').style.width = '0%';
@@ -1290,7 +1202,6 @@ async function analyzeAll() {
   const totalCount = state.photos.length;
   let finishedCount = 0;
   let rateStartedAt = 0; // 남은 시간 계산 기준 (첫 장은 모델 준비 시간이 섞여 있어서 둘째 장부터 잰다)
-  let sheetUpdatedAt = 0;
   // 다음 사진 몇 장의 디코딩을 미리 시작한다 (브라우저가 별도 스레드에서 푼다). 원본 비트맵은 장당 100MB 가까이 되니 몇 장만
   const prepared = new Map();
   const prepareAhead = (index) => {
@@ -1316,12 +1227,6 @@ async function analyzeAll() {
       : Math.round(((performance.now() - rateStartedAt) / 1000 / (finishedCount - 1)) * (totalCount - finishedCount));
     $('#analyze-meter').style.width = `${(finishedCount / totalCount) * 100}%`;
     $('#analyze-text').textContent = t('analyzeProgress', { done: finishedCount, total: totalCount, seconds: remainingSeconds, faceOff: !faceApi });
-    if (photo.thumbUrl && performance.now() - sheetUpdatedAt >= ANALYZE_SHEET_EVERY_MS) {
-      sheetUpdatedAt = performance.now();
-      const sheet = $('#analyze-sheet');
-      sheet.insertAdjacentHTML('beforeend', `<img src="${photo.thumbUrl}" alt="" decoding="async">`);
-      if (sheet.childElementCount > ANALYZE_SHEET_MAX) sheet.firstElementChild.remove();
-    }
   }
   // 브라우저가 열지 못한 사진(HEIC 등)은 고를 수도 없으니 목록에서 뺀다
   const unreadable = state.photos.filter((photo) => photo.analysis.failed);
