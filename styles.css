@@ -598,6 +598,7 @@
   .export-merge input[type=text] { height: 40px; border-radius: 12px; }
   .merge-split { margin-top: 14px; }
   .merge-split .hint { max-width: 70ch; }
+  .merge-split .row + .hint { margin-top: 10px; }
   /* 시작 화면 '둘이 고르기'의 이름 두 칸 */
   .names-row { margin-top: 10px; }
   .names-row input { width: 150px; height: 40px; border-radius: 12px; background: rgba(255, 255, 255, .8); }

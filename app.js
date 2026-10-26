@@ -1205,6 +1205,7 @@ async function crossCheckFaceBackends() {
   console.info('face engine', JSON.stringify(faceEngine));
 }
 
+let exportBasis = null; // 내보내기 기준: a | b | both | either (null이면 지금 고르는 사람). 위쪽 숫자도 이 기준을 쓴다
 let waitingForAnalysis = false; // 분석된 사진을 다 봐서 다음 분석을 기다리는 화면인지
 // 고르는 동안 뒤에서 분석할 때: 손가락·마우스를 누르고 있거나 막 입력한 뒤(0.3초)에는 다음 사진 분석을 시작하지 않는다.
 // 얼굴 모델 한 번이 메인 스레드를 100ms 넘게 잡아서, 끄는 도중에 돌면 사진이 끊겨 움직인다
@@ -1944,10 +1945,12 @@ function renderTopbar() {
     button.disabled = !ready || locked;
     if (locked) button.title = state.analysisDone ? t('tabLockedReview', unreviewed) : t('tabLockedAnalysis'); else button.removeAttribute('title');
   }
-  const keepCount = ready ? keepIds().length : 0;
+  // 내보내기 화면에서 기준이 나와 다르면(둘 다, 한 명이라도, 상대) 위쪽 숫자도 그 기준으로 내보낼 장수
+  const exportCount = state.view === 'export' && exportBasis && exportBasis !== state.currentReviewer;
+  const keepCount = ready ? (exportCount ? selectionIds(exportBasis).length : keepIds().length) : 0;
   const target = state.settings.target;
   $('#tab-first').textContent = ready ? num(undecidedCount()) : '';
-  $('#tab-keep').textContent = ready ? num(keepCount) : '';
+  $('#tab-keep').textContent = ready ? num(keepIds().length) : '';
   $('#tab-drop').textContent = ready ? num(dropIds().length) : '';
   $('#goal-count').textContent = num(keepCount);
   $('#goal-target').textContent = num(target);
@@ -1961,7 +1964,8 @@ function renderTopbar() {
     // 줄이기 도중 맞췄으면 바로 내보내기로 갈 수 있게 알림 줄에 버튼을 띄운다. 무시하고 계속 넘기면 더 줄일 수 있다
     if (state.view === 'distill') showToast(t('targetHitToast', target), [{ label: t('btnGoExport'), run: () => setView('export') }], 8000);
   }
-  previousKeepCount = ready ? keepCount : null;
+  previousKeepCount = ready && !exportCount ? keepCount : null;
+  $('#goal [data-i18n="goalKept"]').textContent = exportCount ? t('goalExport') : t('goalKept');
   $('#goal-note').textContent = keepCount > target ? t('goalOver', keepCount - target) : '';
   $('#goal-meter').style.width = `${Math.min(100, (keepCount / target) * 100)}%`;
   const toggle = $('#reviewer-toggle');
@@ -2104,6 +2108,11 @@ function renderPickView() {
       waitingForAnalysis = true;
       const { done, total } = state.analysisProgress;
       return renderEmpty(stage, t('waitTitle'), t('waitBody', { rest: total - done }), []);
+    }
+    if (!head && undecidedCount() > 0) {
+      // 필터를 켠 채 그 분류를 다 정함: 1차 셀렉은 모든 사진을 정해야 끝나므로 끝 화면 대신 전체 보기로
+      return renderEmpty(stage, t('filterDoneTitle', categoryLabel(state.categoryFilter)), t('filterDoneBody', undecidedCount()),
+        [{ label: t('btnShowAll'), primary: true, run: () => { state.categoryFilter = 'all'; render(); } }]);
     }
     if (!head) {
       const otherName = escapeHtml(state.reviewers[otherReviewerKey()].name);
@@ -2757,7 +2766,10 @@ function renderBurst(stage, unit) {
     </div>`;
   for (const shot of stage.querySelectorAll('.shot')) shot.append(cloneMark('keep'));
   // 오른쪽 버튼 장수는 묶음에서 고른 사진만 센다 (비교용 이미 남긴 사진은 그대로라 세지 않는다)
-  const updateConfirm = () => { $('#act-confirm').innerHTML = `<i class="ph ph-circle"></i>${t('keepPicked', unitSelectedCount())}<kbd>→</kbd>`; };
+  const updateConfirm = () => {
+    $('#act-confirm').innerHTML = `<i class="ph ph-circle"></i>${t('keepPicked', unitSelectedCount())}<kbd>→</kbd>`;
+    $('#act-confirm').disabled = unitSelectedCount() === 0; // 하나도 안 골랐으면 남길 게 없다 (다 빼려면 왼쪽 버튼)
+  };
   const toggleMember = (photoId) => {
     if (burstSelection.selected.has(photoId)) burstSelection.selected.delete(photoId); else burstSelection.selected.add(photoId);
     const shot = stage.querySelector(`.shot[data-id="${CSS.escape(photoId)}"]`);
@@ -2771,6 +2783,7 @@ function renderBurst(stage, unit) {
   }
   $('#burst-expand').onclick = () => { state.expandedGroups.add(unit.key); buildUnits(); saveProjectSoon(); render(); };
   const confirm = async (askedRest = null) => {
+    if (askedRest !== 'drop' && unitSelectedCount() === 0) { showToast(t('burstPickFirst', groupMembers.length), [], 3500); return; }
     // 묶음에서 고른 사진이 있고, 고르지 않은 묶음 사진(아직 안 정했거나 남겨 둔 사진)이 있으면 그 사진들을 어떻게 할지 정한다 (매번 묻거나 기억한 답).
     // 장수는 모두 묶음 사진만 센다
     const restIds = groupMembers.filter((photo) => !burstSelection.selected.has(photo.id) && statusOf(photo.id) !== 'drop').map((photo) => photo.id);
@@ -2781,7 +2794,7 @@ function renderBurst(stage, unit) {
     if (unitSelectedCount() && restIds.length) {
       rest = askedRest ?? (cameBack && burstRestChoice === 'later' ? 'ask' : burstRestChoice);
       if (rest === 'ask') {
-        const answer = await askDialog({ title: t('restAskTitle', { kept: unitSelectedCount(), rest: restIds.length }), body: cameBack ? t('restAskBodyAgain') : t('restAskBody'), confirm: t('restDrop', restIds.length), alt: cameBack ? null : t('restLater'), cancel: t('restBack'), check: cameBack ? null : t('restRemember'), kind: 'burst-rest' });
+        const answer = await askDialog({ title: t('restAskTitle', { kept: unitSelectedCount(), rest: restIds.length }), body: cameBack ? t('restAskBodyAgain') : t('restAskBody'), confirm: t('restDrop', restIds.length), alt: cameBack ? null : t('restLater'), cancel: t('restBack'), check: cameBack ? null : t('restRemember'), kind: 'burst-rest', focus: 'cancel' });
         if (!answer.ok && !answer.alt) return; // 돌아가기: 아무것도 정하지 않는다
         rest = answer.ok ? 'drop' : 'later';
         if (answer.checked) setBurstRestChoice(rest);
@@ -3167,7 +3180,8 @@ function setBurstRestChoice(choice) { burstRestChoice = choice; $('#burst-rest-i
 $('#burst-rest-input').onchange = (event) => setBurstRestChoice(event.target.value);
 
 // alt: 세 번째 선택지 버튼, check: '다음부터 묻지 않기' 같은 체크 상자
-function askDialog({ title, body, input = null, confirm, cancel, alt = null, check = null, kind = '' }) {
+// focus: 'cancel'이면 처음 초점을 취소 쪽에 둔다 (Enter로 사진이 바로 빠지지 않게)
+function askDialog({ title, body, input = null, confirm, cancel, alt = null, check = null, kind = '', focus = 'ok' }) {
   const dialog = $('#ask');
   dialog.dataset.kind = kind; // 어떤 질문인지 (시험에서 구분)
   $('#ask-title').textContent = title;
@@ -3185,7 +3199,7 @@ function askDialog({ title, body, input = null, confirm, cancel, alt = null, che
     dialog.addEventListener('close', () => resolve({ ok: dialog.returnValue === 'ok', alt: dialog.returnValue === 'alt', value: $('#ask-input').value, checked: $('#ask-check-input').checked }), { once: true });
     dialog.returnValue = '';
     dialog.showModal();
-    (input ? $('#ask-input') : $('#ask-ok')).focus();
+    (input ? $('#ask-input') : focus === 'cancel' ? $('#ask-cancel') : $('#ask-ok')).focus();
   });
 }
 
@@ -3400,7 +3414,18 @@ function renamePhotoId(photo, newId) {
     const decisions = state.reviewers[reviewerKey].decisions;
     if (decisions[oldId]) { decisions[newId] = decisions[oldId]; delete decisions[oldId]; }
     for (const roundName of ['distill', 'rescue']) state.rounds[reviewerKey][roundName] = state.rounds[reviewerKey][roundName].map((id) => (id === oldId ? newId : id));
+    state.deferred[reviewerKey] = state.deferred[reviewerKey].map((id) => (id === oldId ? newId : id));
   }
+  // 되돌리기 기록도 새 id로 (안 그러면 Z가 옛 id에 결정을 쓰고 이 사진은 되돌려지지 않는다)
+  const swap = (id) => (id === oldId ? newId : id);
+  for (const entry of state.undoStack) {
+    for (const item of entry.previous) item.id = swap(item.id);
+    for (const mark of entry.roundMarks) mark.id = swap(mark.id);
+    if (entry.deferred) entry.deferred = entry.deferred.map(swap);
+    if (entry.undeferred) entry.undeferred = entry.undeferred.map(swap);
+  }
+  state.priorityIds = state.priorityIds.map(swap);
+  if (singleViewIds.delete(oldId)) singleViewIds.add(newId);
   state.photoById.delete(oldId);
   photo.id = newId;
   state.photoById.set(newId, photo);
@@ -3477,7 +3502,6 @@ async function undoOrganize() {
   render();
 }
 
-let exportBasis = null; // a | b | both | either (null이면 지금 고르는 사람)
 let supportHidden = false;   // '응원' 구역을 숨겼는지 (기기에만 기억)
 dbGet('supportHidden').then((hidden) => { supportHidden = Boolean(hidden); });
 
@@ -3489,10 +3513,12 @@ function selectionIds(basis) {
   return keepIds();
 }
 
-// 의견이 갈린 사진: 한 사람만 남긴 사진 (다른 사람은 뺐거나 아직 안 봤다)
+// 의견이 갈린 사진: 두 사람 모두 정했는데 한 사람만 남긴 사진 (상대가 아직 안 본 사진은 갈린 게 아니다)
 function splitPhotoIds() {
-  return state.photos.filter((photo) => (statusOf(photo.id, 'a') === 'keep') !== (statusOf(photo.id, 'b') === 'keep')).map((photo) => photo.id);
+  return state.photos.filter((photo) => statusOf(photo.id, 'a') && statusOf(photo.id, 'b') && statusOf(photo.id, 'a') !== statusOf(photo.id, 'b')).map((photo) => photo.id);
 }
+// 한 사람만 정한 사진 (같이 정하기에는 넣지 않고 따로 알린다)
+const decidedByOneIds = () => state.photos.filter((photo) => !statusOf(photo.id, 'a') !== !statusOf(photo.id, 'b')).map((photo) => photo.id);
 
 // ---------- 의견이 갈린 사진 같이 정하기 ----------
 // 한 장씩 보며 오른쪽은 둘 다 남기기, 왼쪽은 둘 다 빼기. 결정은 두 사람 모두에게 적고, 다 정하면 '둘 다 남긴 사진'을 내보낸다
@@ -3718,7 +3744,7 @@ function renderExportView() {
       <p class="hint">${t('mergeHint')}</p>
       ${bothDecided ? `<div class="merge-split">${splitIds.length
         ? `<p class="hint">${t('mergeSplitHint')}</p><div class="row"><button class="button primary" id="split-together">${t('btnSplitTogether', splitIds.length)}</button></div>`
-        : `<p class="hint">${t('mergeNoSplit')}</p>`}</div>` : ''}
+        : `<p class="hint">${t('mergeNoSplit')}</p>`}${decidedByOneIds().length ? `<p class="hint">${t('mergeDecidedByOne', decidedByOneIds().length)}</p>` : ''}</div>` : ''}
       <div class="row"><button class="button" id="pick-as-other"><i class="ph ph-arrow-u-up-left"></i>${t('pickAsOther', otherName)}</button></div>
       <div class="row">
         <input type="text" id="rename-a" value="${nameA}" style="width:120px" aria-label="${t('nameAAria')}">
@@ -3751,7 +3777,11 @@ function renderExportView() {
   for (const figure of wrap.querySelectorAll('.contact figure')) {
     $('.thumb', figure).onclick = () => openViewer(state.photoById.get(figure.dataset.id));
     const removeButton = $('.remove', figure);
-    if (removeButton) removeButton.onclick = () => { recordDecisions([{ id: figure.dataset.id, status: 'drop' }], 'export-remove'); render(); };
+    if (removeButton) removeButton.onclick = () => {
+      recordDecisions([{ id: figure.dataset.id, status: 'drop' }], 'export-remove');
+      render();
+      showToast(t('exportRemoved', escapeHtml(state.photoById.get(figure.dataset.id).name)), [{ label: t('undo'), run: undoLast }], 5000);
+    };
   }
   $('#rename-a').onchange = (event) => { state.reviewers.a.name = event.target.value.trim() || t('defaultNameA'); saveProjectSoon(); render(); };
   $('#rename-b').onchange = (event) => { state.reviewers.b.name = event.target.value.trim() || t('defaultNameB'); saveProjectSoon(); render(); };
