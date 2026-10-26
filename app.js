@@ -120,7 +120,7 @@ const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시�
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
 const CACHE_VERSION = 'v5';             // 분석 방식이 바뀌면 올린다 (v5: 같은 사람 알아보기, 미적 점수)
-const APP_VERSION = 'v35';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
+const APP_VERSION = 'v36';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
 const DECODE_AHEAD = isTouchDevice ? 1 : 2;  // 분석하는 동안 미리 풀어 둘 다음 사진 수 (휴대폰은 메모리 때문에 1장)
 const ETA_WARMUP_PHOTOS = 3;             // 이만큼 분석하기 전에는 남은 시간을 보여주지 않는다 (첫 장은 모델 준비로 느리다)
 const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
@@ -677,13 +677,13 @@ let aestheticModel = null;
 const aestheticEngine = { status: 'off', scored: 0 }; // status: ready | failed | off, scored: 점수를 낸 사진 수
 const aestheticCanvas = document.createElement('canvas'); // 모델 입력 224x224 사본
 aestheticCanvas.width = AESTHETIC_INPUT; aestheticCanvas.height = AESTHETIC_INPUT;
-const aestheticContext = aestheticCanvas.getContext('2d');
+const aestheticContext = aestheticCanvas.getContext('2d', { willReadFrequently: true }); // 자주 읽는 캔버스는 그래픽 가속과 상관없이 같은 값 (아래 설명)
 
 // 눈 감음 정밀 모델(MediaPipe Face Landmarker) 상태 (분석 정보에 보여준다)
 let eyeLandmarker = null;
 const eyeEngine = { status: 'off', faces: 0, ms: 0 }; // status: ready | failed | off, faces: 이번에 정밀 모델에 넘긴 얼굴 수, ms: 그 시간 합
 const eyeCropCanvas = document.createElement('canvas'); // 얼굴 둘레를 잘라낸 사본
-const eyeCropContext = eyeCropCanvas.getContext('2d');
+const eyeCropContext = eyeCropCanvas.getContext('2d', { willReadFrequently: true });
 
 const megabytes = (bytes) => (bytes / 1_000_000).toFixed(1);
 const MODEL_CACHE_NAME = 'moment-select-models-1'; // sw.js의 MODEL_CACHE와 같아야 한다
@@ -876,13 +876,15 @@ function drawScaled(bitmap, longSide, canvas, context) {
 
 // 1024px를 한 번에 9x8이나 16x12로 줄이면 픽셀 몇 개만 집어오는 앨리어싱이 생겨 비교값이 흔들린다.
 // 반씩 여러 번 줄여서 64px 근처의 부드러운 사본을 만든 뒤 그것을 작은 크기로 줄인다.
+// 분석에 쓰는 캔버스는 모두 '자주 읽는 캔버스'로 만든다. 일반 캔버스는 그래픽 가속이 켜지면 그래픽 장치가 줄여서 값이 조금 달라지고,
+// 지문(dHash)은 밝기 차이가 작은 곳에서 비트가 많이 뒤집힌다. 같은 사진 42장에서 가속이 없으면 비슷한 컷 묶음 5개, 있으면 0개였다 (v35까지)
 const smallCanvas = document.createElement('canvas');
-const smallContext = smallCanvas.getContext('2d');
+const smallContext = smallCanvas.getContext('2d', { willReadFrequently: true });
 function prepareSmallCopy() {
   let source = analysisCanvas;
   let width = analysisCanvas.width, height = analysisCanvas.height;
   const stepCanvas = document.createElement('canvas');
-  const stepContext = stepCanvas.getContext('2d');
+  const stepContext = stepCanvas.getContext('2d', { willReadFrequently: true });
   while (Math.max(width, height) > 128) {
     width = Math.max(1, Math.round(width / 2)); height = Math.max(1, Math.round(height / 2));
     stepCanvas.width = width; stepCanvas.height = height;
@@ -1179,7 +1181,7 @@ async function crossCheckFaceBackends() {
     try {
       const bitmap = await createImageBitmap(await getPhotoFile(photo), { imageOrientation: 'from-image' });
       const canvas = document.createElement('canvas');
-      drawScaled(bitmap, ANALYSIS_LONG_SIDE, canvas, canvas.getContext('2d'));
+      drawScaled(bitmap, ANALYSIS_LONG_SIDE, canvas, canvas.getContext('2d', { willReadFrequently: true }));
       bitmap.close();
       sampleCanvases.push(canvas);
     } catch { /* 열지 못한 사진은 비교에서 뺀다 */ }
@@ -1871,17 +1873,16 @@ function rescueQueue() {
     .sort((left, right) => right.score - left.score);
   return bringPriorityFirst(skippedLast(queue, (photo) => photo.id, 'rescue'), (photo) => [photo.id]);
 }
+// 줄이기 '두 장 나란히': 가장 약한 남긴 사진과, 지금 필터 안에서 비슷한 남긴 사진 (기준은 1차 셀렉의 '이미 남긴 비슷한 사진'과 같다).
+// 같은 묶음 사진을 먼저 고른다. 비슷한 상대가 없으면 null이고 한 장으로 본다.
+// v35까지는 필터 밖이나 다른 장면의 가장 가까운 사진과 비교해서, '왼쪽 남기기'로 보지 않던 사진이 빠졌다
 function comparePair() {
   const queue = distillQueue();
   if (!queue.length) return null;
   const weakest = queue[0];
-  const candidates = keepIds().filter((id) => id !== weakest.id).map((id) => state.photoById.get(id));
-  if (!candidates.length) return null;
-  const closest = candidates.reduce((best, photo) => {
-    const distance = hashDistance(weakest.analysis.hash, photo.analysis.hash) - (photo.groupId && photo.groupId === weakest.groupId ? 100 : 0);
-    return distance < best.distance ? { photo, distance } : best;
-  }, { photo: null, distance: Infinity }).photo;
-  return [weakest, closest];
+  const partners = similarKeptPhotos(weakest).filter((photo) => matchesCategory(photo));
+  const partner = partners.find((photo) => photo.groupId && photo.groupId === weakest.groupId) ?? partners[0];
+  return partner ? [weakest, partner] : null;
 }
 
 /* =====================================================================
@@ -2146,6 +2147,7 @@ function renderPickView() {
     if (state.compareMode) {
       const pair = comparePair();
       if (pair) return renderCompare(stage, pair);
+      if (queue.length) setNotice(`${$('#notice').innerHTML} ${t('compareNoMatch')}`, keepCount > target); // 비슷한 상대가 없어 한 장으로 본다
     }
     const head = queue[0];
     const distillPanels = head ? multiIds('distill', queue) : null;
@@ -4025,7 +4027,7 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
 }
 // 진단용: ?debug=1 이면 콘솔에서 상태를 볼 수 있게 한다 (사진 데이터는 이 기기 안에만 있다)
 if (new URLSearchParams(location.search).get('debug') === '1') {
-  window.momentSelectDebug = { APP_VERSION, state, faceEngine, aestheticEngine, eyeEngine, hashDistance, correlation, looksSimilar, similarKeptPhotos, scoreAccuracy, trainingPairs, learningEvidence, effectiveCastKeys, firstPassQueue, distillQueue, isLastKeptOfScene, activeModel, diagnosticsText, get probeUnitKey() { return probeUnitKey; } };
+  window.momentSelectDebug = { APP_VERSION, state, faceEngine, aestheticEngine, eyeEngine, hashDistance, correlation, looksSimilar, similarKeptPhotos, scoreAccuracy, trainingPairs, learningEvidence, effectiveCastKeys, firstPassQueue, distillQueue, comparePair, categoryOf, isLastKeptOfScene, activeModel, diagnosticsText, get probeUnitKey() { return probeUnitKey; } };
 }
 // 시작 화면 아래 의견 링크
 if (FEEDBACK_URL) { $('#feedback-link').href = feedbackUrl(); $('#feedback-link').hidden = false; }
