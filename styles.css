@@ -241,6 +241,10 @@
   .burst-head h2 { color: var(--stage-ink); }
   .burst-head .hint { color: var(--stage-ink-2); }
   .burst-grid { min-height: 0; overflow: auto; display: grid; gap: 12px; grid-template-columns: repeat(var(--cols, 3), 1fr); grid-auto-rows: max(180px, calc((100% - (var(--rows, 2) - 1) * 12px) / var(--rows, 2))); padding: 14px; }
+  .burst-grid { --shot-row: minmax(180px, 1fr); }
+  /* 묶음 밖에서 이미 남긴 비교용 사진 앞의 제목 줄 (한 줄 높이만 차지) */
+  .burst-kept-label { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; padding: 6px 2px 0; color: var(--stage-ink); font-size: 15px; }
+  .burst-kept-label span { color: var(--stage-ink-2); font-size: 14px; }
   .shot { position: relative; padding: 0; border: none; background: #24282A; cursor: pointer; border-radius: 2px; }
   .shot img { width: 100%; height: 100%; object-fit: contain; display: block; }
   .shot .index { position: absolute; top: 6px; left: 6px; font-size: 12px; font-weight: 600; background: rgba(24, 27, 28, .85); color: var(--stage-ink); border-radius: 3px; padding: 1px 6px; }
@@ -666,6 +670,9 @@
     .burst-head .hint { display: none; }
     /* 작은 화면에서도 묶음의 사진이 스크롤 없이 다 보이게 칸의 최소 높이를 낮춘다 (180px이면 360px 폭 휴대폰에서 두 번째 사진이 잘린다) */
     .burst-grid { padding: 8px; gap: 8px; grid-auto-rows: max(120px, calc((100% - (var(--rows, 2) - 1) * 8px) / var(--rows, 2))); }
+    .burst-grid { --shot-row: minmax(120px, 1fr); }
+    .burst-kept-label { font-size: 14px; gap: 2px 8px; }
+    .burst-kept-label span { font-size: 13px; }
     .compare { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; padding: 0; }
     .controls .label-long { display: none; }
     .controls .label-short { display: inline; }

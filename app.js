@@ -120,7 +120,7 @@ const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시�
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
 const CACHE_VERSION = 'v5';             // 분석 방식이 바뀌면 올린다 (v5: 같은 사람 알아보기, 미적 점수)
-const APP_VERSION = 'v34';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
+const APP_VERSION = 'v35';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
 const DECODE_AHEAD = isTouchDevice ? 1 : 2;  // 분석하는 동안 미리 풀어 둘 다음 사진 수 (휴대폰은 메모리 때문에 1장)
 const ETA_WARMUP_PHOTOS = 3;             // 이만큼 분석하기 전에는 남은 시간을 보여주지 않는다 (첫 장은 모델 준비로 느리다)
 const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
@@ -1715,7 +1715,7 @@ function buildUnits() {
 /* =====================================================================
    결정 기록과 되돌리기
    ===================================================================== */
-function emptyUndo() { return { reviewerKey: state.currentReviewer, previous: [], roundMarks: [] }; }
+function emptyUndo() { return { reviewerKey: state.currentReviewer, previous: [], roundMarks: [], undeferred: [] }; }
 
 // changes: [{id, status}], preferences: 비슷한 컷끼리 고른 결과 [{winnerId, loserId}] (쌍 비교 학습용)
 // 되돌리기 버튼: 넓은 화면에서는 'Undo' 글자를 붙이고, 방금 결정했으면 잠깐 강조해서 되돌릴 수 있다는 걸 알린다
@@ -1737,7 +1737,7 @@ function recordDecisions(changes, stage, preferences = []) {
   }
   const deferred = state.deferred[state.currentReviewer];
   for (const { id, status } of changes) {
-    if (deferred.includes(id)) deferred.splice(deferred.indexOf(id), 1);
+    if (deferred.includes(id)) { deferred.splice(deferred.indexOf(id), 1); undoEntry.undeferred.push(id); } // 되돌리면 다시 미룬 상태로
     const previousDecision = decisionOf(id);
     undoEntry.previous.push({ id, decision: previousDecision ? structuredClone(previousDecision) : null });
     // score: 결정할 때 보이던 점수 (점수 적중률 측정용), lostTo: 이 사진 대신 고른 비슷한 사진
@@ -1775,6 +1775,7 @@ function undoLast() {
   }
   const deferred = state.deferred[undoEntry.reviewerKey];
   for (const id of undoEntry.deferred ?? []) if (deferred.includes(id)) deferred.splice(deferred.indexOf(id), 1);
+  for (const id of undoEntry.undeferred ?? []) if (!deferred.includes(id)) deferred.push(id);
   for (const { roundName, id } of undoEntry.roundMarks) {
     const seenIds = state.rounds[undoEntry.reviewerKey][roundName];
     const index = seenIds.indexOf(id);
@@ -1848,7 +1849,7 @@ function firstPassQueue() {
   if (probe && queue[0] !== probe) queue.splice(queue.indexOf(probe), 1), queue.unshift(probe);
   // 나중에 보기로 미룬 사진만 남은 단위는 맨 뒤로
   const deferred = state.deferred[state.currentReviewer];
-  const onlyDeferred = (unit) => unit.ids.every((id) => statusOf(id) || deferred.includes(id));
+  const onlyDeferred = (unit) => unit.type !== 'divider' && unit.ids.every((id) => statusOf(id) || deferred.includes(id)); // 구분선은 사진이 없어 every가 참이 된다
   const ordered = skippedLast(queue, (unit) => unit.key, 'first');
   return bringPriorityFirst([...ordered.filter((unit) => !onlyDeferred(unit)), ...ordered.filter(onlyDeferred)], (unit) => unit.ids);
 }
@@ -2051,6 +2052,7 @@ $('#filmstrip').onclick = (event) => {
   if (skipped) for (const entry of filmstripEntries.slice(0, order)) skipped.add(entry.key);
   if (state.view === 'first' && filmstripEntries[order]?.unit && !filmstripEntries[order].unit.recommended) state.dividerSeen[state.currentReviewer] = true; // 구분선 너머로 건너뛰었으면 구분선은 본 것으로
   state.priorityIds = [];
+  multiSet = null; // 나란히 보는 중이면 누른 사진부터 칸을 다시 채운다
   render();
 };
 
@@ -2718,29 +2720,34 @@ function renderBurst(stage, unit) {
       if (!groupIdSet.has(lookalike.id) && !outsideKept.includes(lookalike)) outsideKept.push(lookalike);
     }
   }
-  const members = [...groupMembers, ...outsideKept.slice(0, 4)]; // 화면에 보여줄 사진 (묶음 사진, 묶음 밖 남긴 사진 순)
+  const shownKept = outsideKept.slice(0, 4); // 비교용 이미 남긴 사진 (그대로 남는다. 선택을 풀면 빠진다)
+  const members = [...groupMembers, ...shownKept]; // 화면에 보여줄 사진 (묶음 사진, 묶음 밖 남긴 사진 순)
   if (burstSelection.key !== unit.key) {
-    // 묶음 안에 이미 결정한 사진이 있으면 그 결정을 그대로 보여주고, 없으면 최고점 한 장을 미리 고른다
-    const alreadyDecided = members.some((photo) => statusOf(photo.id));
-    const initialIds = alreadyDecided
-      ? members.filter((photo) => statusOf(photo.id) === 'keep').map((photo) => photo.id)
-      : state.settings.useScore ? members.filter((photo) => photo.groupBest).map((photo) => photo.id) : [];
-    burstSelection = { key: unit.key, selected: new Set(initialIds) };
+    // 묶음 사진: 이미 결정한 사진이 있으면 그 결정을 그대로 보여주고, 없으면 최고점 한 장을 미리 고른다.
+    // 비교용 이미 남긴 사진은 남긴 상태(선택됨)로 둔다. 이 사진이 있다고 최고점 미리 고르기를 건너뛰지 않는다
+    const unitDecided = groupMembers.some((photo) => statusOf(photo.id));
+    const unitIds = unitDecided
+      ? groupMembers.filter((photo) => statusOf(photo.id) === 'keep').map((photo) => photo.id)
+      : state.settings.useScore ? groupMembers.filter((photo) => photo.groupBest).map((photo) => photo.id) : [];
+    burstSelection = { key: unit.key, selected: new Set([...unitIds, ...shownKept.map((photo) => photo.id)]) };
   }
+  const unitSelectedCount = () => groupMembers.filter((photo) => burstSelection.selected.has(photo.id)).length;
+  const preselected = !groupMembers.some((photo) => statusOf(photo.id)) && unitSelectedCount() > 0;
   // 좁은 화면(휴대폰 세로)에서는 사진을 크게 보이게 열 수를 줄인다
   const isNarrow = matchMedia('(max-width: 760px)').matches;
   const columns = isNarrow ? (members.length <= 3 ? 1 : 2) : members.length <= 4 ? 2 : members.length <= 9 ? 3 : 4;
   stage.innerHTML = `
     <div class="burst">
       <div class="burst-head">
-        <h2>${t('burstTitle', groupMembers.length)}${outsideKept.length ? t('burstWithKept', Math.min(4, outsideKept.length)) : ''}</h2>
+        <h2>${t('burstTitle', groupMembers.length)}</h2>
         ${probeUnitKey === unit.key ? `<span class="tag">${t('tagProbe')}</span>` : ''}
-        <span class="hint">${t('burstHint')}${state.settings.useScore ? t('burstHintScored') : ''}</span>
+        <span class="hint">${t('burstHint')}${preselected ? t('burstHintScored') : ''}</span>
         <span class="spacer"></span>
         <button class="button" id="burst-expand">${t('burstExpand')}</button>
       </div>
-      <div class="burst-grid" style="--cols:${columns};--rows:${Math.min(3, Math.ceil(members.length / columns))}">
-        ${members.map((photo, index) => `
+      <div class="burst-grid${shownKept.length ? ' with-kept' : ''}" style="--cols:${columns};--rows:${Math.min(3, Math.ceil(members.length / columns))}${shownKept.length ? `;grid-template-rows:repeat(${Math.ceil(groupMembers.length / columns)}, var(--shot-row)) auto repeat(${Math.ceil(shownKept.length / columns)}, var(--shot-row))` : ''}">
+        ${members.map((photo, index) => `${index === groupMembers.length ? `
+          <div class="burst-kept-label"><strong>${t('burstKeptLabel', shownKept.length)}</strong><span>${t('burstKeptHint')}</span></div>` : ''}
           <button class="shot" data-id="${escapeHtml(photo.id)}" aria-pressed="${burstSelection.selected.has(photo.id)}" title="${t('burstShotTitle', escapeHtml(photo.relPath))}">
             <img src="${photo.thumbUrl}" alt="${escapeHtml(photo.name)}" loading="lazy">
             ${index < 9 ? `<span class="index num">${index + 1}</span>` : ''}
@@ -2749,7 +2756,8 @@ function renderBurst(stage, unit) {
       </div>
     </div>`;
   for (const shot of stage.querySelectorAll('.shot')) shot.append(cloneMark('keep'));
-  const updateConfirm = () => { $('#act-confirm').innerHTML = `<i class="ph ph-circle"></i>${t('keepCount', burstSelection.selected.size)}<kbd>→</kbd>`; };
+  // 오른쪽 버튼 장수는 묶음에서 고른 사진만 센다 (비교용 이미 남긴 사진은 그대로라 세지 않는다)
+  const updateConfirm = () => { $('#act-confirm').innerHTML = `<i class="ph ph-circle"></i>${t('keepPicked', unitSelectedCount())}<kbd>→</kbd>`; };
   const toggleMember = (photoId) => {
     if (burstSelection.selected.has(photoId)) burstSelection.selected.delete(photoId); else burstSelection.selected.add(photoId);
     const shot = stage.querySelector(`.shot[data-id="${CSS.escape(photoId)}"]`);
@@ -2763,21 +2771,25 @@ function renderBurst(stage, unit) {
   }
   $('#burst-expand').onclick = () => { state.expandedGroups.add(unit.key); buildUnits(); saveProjectSoon(); render(); };
   const confirm = async (askedRest = null) => {
-    // 고른 사진이 있고, 고르지 않았는데 아직 정하지 않은 묶음 사진이 있으면 그 사진들을 어떻게 할지 정한다 (매번 묻거나 기억한 답)
-    const restIds = groupMembers.filter((photo) => !burstSelection.selected.has(photo.id) && !statusOf(photo.id)).map((photo) => photo.id);
+    // 묶음에서 고른 사진이 있고, 고르지 않은 묶음 사진(아직 안 정했거나 남겨 둔 사진)이 있으면 그 사진들을 어떻게 할지 정한다 (매번 묻거나 기억한 답).
+    // 장수는 모두 묶음 사진만 센다
+    const restIds = groupMembers.filter((photo) => !burstSelection.selected.has(photo.id) && statusOf(photo.id) !== 'drop').map((photo) => photo.id);
+    const deferredIds = state.deferred[state.currentReviewer];
+    // 나중에 보기로 미뤘다가 다시 나온 사진이면 또 미루지 않고 묻는다 (기억한 '나중에 보기'로 같은 묶음이 끝없이 다시 나오던 것)
+    const cameBack = restIds.some((id) => deferredIds.includes(id));
     let rest = 'drop';
-    if (burstSelection.selected.size && restIds.length) {
-      rest = askedRest ?? burstRestChoice;
+    if (unitSelectedCount() && restIds.length) {
+      rest = askedRest ?? (cameBack && burstRestChoice === 'later' ? 'ask' : burstRestChoice);
       if (rest === 'ask') {
-        const answer = await askDialog({ title: t('restAskTitle', { kept: burstSelection.selected.size, rest: restIds.length }), body: t('restAskBody'), confirm: t('restDrop', restIds.length), alt: t('restLater'), cancel: t('restBack'), check: t('restRemember'), kind: 'burst-rest' });
+        const answer = await askDialog({ title: t('restAskTitle', { kept: unitSelectedCount(), rest: restIds.length }), body: cameBack ? t('restAskBodyAgain') : t('restAskBody'), confirm: t('restDrop', restIds.length), alt: cameBack ? null : t('restLater'), cancel: t('restBack'), check: cameBack ? null : t('restRemember'), kind: 'burst-rest' });
         if (!answer.ok && !answer.alt) return; // 돌아가기: 아무것도 정하지 않는다
         rest = answer.ok ? 'drop' : 'later';
         if (answer.checked) setBurstRestChoice(rest);
       }
     }
-    // 묶음 사진은 고른 대로, 묶음 밖 남긴 사진은 선택을 풀었을 때만 뺀다. 나중에 보기면 고르지 않은 사진은 정하지 않는다
+    // 묶음 사진은 고른 대로(이미 뺀 사진은 그대로), 묶음 밖 남긴 사진은 선택을 풀었을 때만 뺀다. 나중에 보기면 고르지 않은 사진은 정하지 않는다
     const changes = members
-      .filter((photo) => groupIdSet.has(photo.id) || !burstSelection.selected.has(photo.id))
+      .filter((photo) => (groupIdSet.has(photo.id) ? burstSelection.selected.has(photo.id) || statusOf(photo.id) !== 'drop' : !burstSelection.selected.has(photo.id)))
       .filter((photo) => rest !== 'later' || !restIds.includes(photo.id))
       .map((photo) => ({ id: photo.id, status: burstSelection.selected.has(photo.id) ? 'keep' : 'drop' }));
     // 고른 사진은 안 고른 사진마다 한 번씩 이긴 것으로 기록 (다 뺐으면 비교 정보가 없다)
@@ -2785,17 +2797,19 @@ function renderBurst(stage, unit) {
     const loserIds = changes.filter((change) => change.status === 'drop').map((change) => change.id);
     const undoEntry = recordDecisions(changes, 'first-burst', winnerIds.flatMap((winnerId) => loserIds.map((loserId) => ({ winnerId, loserId }))));
     if (rest === 'later') {
-      state.deferred[state.currentReviewer].push(...restIds);
-      undoEntry.deferred = restIds;
-      showToast(t('restLaterToast', restIds.length), [{ label: t('undo'), run: undoLast }]);
+      const newlyDeferred = restIds.filter((id) => !statusOf(id) && !deferredIds.includes(id));
+      deferredIds.push(...newlyDeferred);
+      undoEntry.deferred = newlyDeferred;
+      showToast(t('restLaterToast', newlyDeferred.length), [{ label: t('undo'), run: undoLast }]);
     }
     burstSelection = { key: null, selected: new Set() };
     saveProjectSoon();
     render();
   };
-  const dropAll = () => { burstSelection.selected.clear(); confirm('drop'); };
+  // 왼쪽: 이 묶음 사진만 뺀다. 비교용 이미 남긴 사진은 선택을 그대로 두어 남는다
+  const dropAll = () => { for (const photo of groupMembers) burstSelection.selected.delete(photo.id); confirm('drop'); };
   $('#controls').innerHTML = `
-    <button class="button decide" id="act-dropall"><i class="ph ph-x"></i>${t('dropAll')}<kbd>←</kbd></button>
+    <button class="button decide" id="act-dropall"><i class="ph ph-x"></i>${t('dropBurst', groupMembers.length)}<kbd>←</kbd></button>
     ${undoButtonHtml()}
     <button class="button decide keep" id="act-confirm"></button>`;
   updateConfirm();
@@ -2861,12 +2875,15 @@ function renderKeptCompare(stage, currentPhoto, keptLookalikes, stageName) {
     if (deciding) return;
     deciding = true;
     if (keepMarkOn !== null) { const mark = cloneMark('keep'); shots[keepMarkOn].append(mark); mark.classList.add('drawn'); }
-    setTimeout(() => {
+    const run = () => {
       const undoEntry = changes.length ? recordDecisions(changes, `${stageName}-kept-compare`, preferences) : emptyUndo();
       if (!changes.length) state.undoStack.push(undoEntry);
-      if (stageName === 'rescue') markRoundSeen('rescue', [currentPhoto.id], undoEntry);
+      // 다시 보기에서 바꾸기로 뺀 이미 남긴 사진도 본 것으로 (곧바로 다시 나오지 않게)
+      if (stageName === 'rescue') markRoundSeen('rescue', [currentPhoto.id, ...changes.filter((change) => change.id !== currentPhoto.id).map((change) => change.id)], undoEntry);
       render();
-    }, keepMarkOn !== null ? 260 : 0);
+    };
+    // 표시를 그리는 사이에 되돌리기를 누르면 이 결정부터 반영한 뒤 되돌린다 (그 앞 결정이 풀리지 않게)
+    pendingDecision = { run, timer: setTimeout(() => { pendingDecision = null; run(); }, keepMarkOn !== null ? 260 : 0) };
   };
   // 왼쪽: 지금 사진 빼기. 다시 보기에서는 이미 빠진 사진이라 결정은 그대로 두고 넘어간다
   const dropCurrent = () => finish(stageName === 'rescue' ? [] : [{ id: currentPhoto.id, status: 'drop' }], null, [{ winnerId: keptPhoto.id, loserId: currentPhoto.id }]);
@@ -2908,11 +2925,12 @@ function renderCompare(stage, [leftPhoto, rightPhoto]) {
     const winner = winnerIndex === 0 ? leftPhoto : rightPhoto;
     const loser = winnerIndex === 0 ? rightPhoto : leftPhoto;
     $('.mark', shots[winnerIndex]).classList.add('drawn');
-    setTimeout(() => {
+    const run = () => {
       const undoEntry = recordDecisions([{ id: loser.id, status: 'drop' }], 'distill-compare', [{ winnerId: winner.id, loserId: loser.id }]);
       markRoundSeen('distill', [winner.id, loser.id], undoEntry);
       render();
-    }, 260);
+    };
+    pendingDecision = { run, timer: setTimeout(() => { pendingDecision = null; run(); }, 260) }; // 표시를 그리는 사이의 되돌리기는 이 결정부터 반영
   };
   const keepBoth = () => {
     const undoEntry = emptyUndo();
@@ -3508,6 +3526,8 @@ function decideTogether(status) {
   if (!id) return;
   const now = Date.now();
   together.history.push({ id, previous: { a: structuredClone(decisionOf(id, 'a') ?? null), b: structuredClone(decisionOf(id, 'b') ?? null) } });
+  // 고르기 화면의 되돌리기(Z)는 한 사람 것만 되돌리므로, 같이 정한 사진에 대한 예전 기록은 지운다 (같이 정하기 안의 되돌리기는 그대로)
+  for (const entry of state.undoStack) entry.previous = entry.previous.filter((item) => item.id !== id);
   for (const reviewerKey of ['a', 'b']) {
     const previous = decisionOf(id, reviewerKey);
     state.reviewers[reviewerKey].decisions[id] = {
