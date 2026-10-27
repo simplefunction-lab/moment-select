@@ -99,7 +99,7 @@
   .goal-line { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; white-space: nowrap; }
   .goal-line b { font-weight: 650; }
   /* 위쪽 '남긴 사진'은 누르면 목표 장수를 바꾸는 버튼 (v39) */
-  button.goal-line { appearance: none; background: none; border: none; padding: 2px 0; margin: 0; color: inherit; font: inherit; font-size: 13px; cursor: pointer; align-items: center; text-align: left; }
+  button.goal-line { appearance: none; background: none; border: none; padding: 0; min-height: 26px; margin: 0; color: inherit; font: inherit; font-size: 13px; cursor: pointer; align-items: center; text-align: left; }
   button.goal-line:hover b, button.goal-line:focus-visible b { text-decoration: underline; }
   .goal-caret { flex-shrink: 0; opacity: .7; }
   .goal.unlimited .goal-meter { visibility: hidden; }
@@ -758,8 +758,9 @@
     .tabs { height: 44px; }
     .notice { flex: 1; min-width: 0; }
     .toolbar > .spacer { display: none; }
-    #criteria-button, #cast-button { padding: 0 8px; }
-    #criteria-button .label, #cast-button .label { display: none; }
+    #criteria-button, #cast-button, #compare-toggle { padding: 0 8px; }
+    /* '두 장 나란히'도 휴대폰에서는 아이콘만: 글자가 보이면 줄이기 안내 문장이 좁은 칸에 7줄로 접혀 사진이 작아졌다 (320px) */
+    #criteria-button .label, #cast-button .label, #compare-toggle .label { display: none; }
     .stage { padding: 10px; }
     .tags .tag.path { display: none; }
     .controls { padding: 10px 12px; padding-bottom: max(10px, env(safe-area-inset-bottom)); gap: 8px; flex-wrap: nowrap; }
