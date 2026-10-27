@@ -147,10 +147,13 @@
       <div class="analyze-head">
         <h1 id="analyze-title" data-i18n="analyzeTitle">Analyzing photos</h1>
         <span class="hint num" id="analyze-text"></span>
-        <span class="spacer"></span>
-        <button class="button quiet" id="skip-faces" data-i18n="skipFaces">Skip faces (faster)</button>
       </div>
       <div class="analyze-meter"><span id="analyze-meter"></span></div>
+      <!-- 얼굴 분석 끄기: 모델을 받을 때와 분석할 때 같은 자리(진행 막대 아래 카드). v38까지는 제목 줄 끝의 글자 버튼이라 버튼처럼 보이지 않았고 자리가 바뀌었다 -->
+      <div class="analyze-option" id="skip-faces-row">
+        <div class="analyze-option-text"><b data-i18n="skipFaces">Skip faces (faster)</b><span class="hint" data-i18n="skipFacesHint">Expressions and closed eyes are not checked. Only sharpness and exposure.</span></div>
+        <button class="button" id="skip-faces" type="button"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg><span data-i18n="skipFacesButton">Turn off</span></button>
+      </div>
       <!-- 첫 100장이 분석되면: 분석이 끝나기 전에 고르기 시작 (나머지는 뒤에서 계속 분석) -->
       <div class="analyze-start hidden" id="analyze-start-row"><button class="button primary" id="analyze-start" data-i18n="analyzeStart">Start picking now</button><span class="hint" id="analyze-start-hint"></span></div>
       <p class="hint analyze-note hidden" id="analyze-note"></p>
@@ -174,9 +177,22 @@
       </div>
       <div class="stage" id="stage"></div>
       <div class="controls" id="controls"></div>
-      <div class="filmstrip" id="filmstrip" aria-label="Up next" data-i18n-aria="filmstripAria"></div>
+      <!-- 사진 줄 (v39): 순서가 고정된 가로 줄, 한 장씩 옮기는 화살표, 모든 사진을 격자로 펼치기 -->
+      <div class="filmbar" id="filmbar">
+        <button class="film-nav" id="film-prev" type="button" aria-label="Previous photo" data-i18n-aria="filmPrev"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg></button>
+        <div class="filmstrip" id="filmstrip" aria-label="Up next" data-i18n-aria="filmstripAria"></div>
+        <button class="film-nav" id="film-next" type="button" aria-label="Next photo" data-i18n-aria="filmNext"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg></button>
+        <button class="film-expand" id="film-expand" type="button"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg><span data-i18n="filmExpand">All</span></button>
+      </div>
     </div>
   </section>
+
+  <!-- 사진 줄 펼치기: 이 단계의 사진을 모두 격자로. 누르면 그 사진으로 가고 닫힌다 -->
+  <dialog class="film-grid" id="film-grid" aria-labelledby="film-grid-title">
+    <div class="film-grid-head"><h2 id="film-grid-title"></h2><button class="button" id="film-collapse" type="button" data-i18n="filmCollapse">Close</button></div>
+    <div class="film-grid-body" id="film-grid-body"></div>
+    <p class="hint" data-i18n="filmGridHint">Tap a photo to open it. The order does not change.</p>
+  </dialog>
 
   <!-- 내보내기 -->
   <section class="view hidden" id="view-export">
@@ -184,6 +200,12 @@
   </section>
 </main>
 
+<!-- 묶음 점수 근거 (v39): 묶음 안에서 원값끼리 비교한 막대. 차이가 작으면 '비슷함' -->
+<dialog class="score-why" id="score-why" aria-labelledby="score-why-title">
+  <div class="film-grid-head"><h2 id="score-why-title"></h2><button class="button" id="score-why-close" type="button" data-i18n="whyClose">Close</button></div>
+  <p class="hint" data-i18n="whyHint">Compared within this set. A longer bar is better within the set. Small real differences show as “about the same”.</p>
+  <div class="score-why-body" id="score-why-body"></div>
+</dialog>
 <div id="criteria" popover role="dialog" aria-label="Scoring" data-i18n-aria="criteriaButton"></div>
 <div id="cast" popover role="dialog" aria-label="Main people" data-i18n-aria="castTitle"></div>
 <!-- 묻고 답 받는 창 (폴더 정리 여부, 옮기기 확인). 내용은 app.js의 askDialog가 채운다 -->
