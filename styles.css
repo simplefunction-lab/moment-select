@@ -700,6 +700,11 @@
   .support h3 { margin: 18px 0 4px; padding-top: 16px; border-top: 1px solid var(--rule); font-size: 16px; }
   .support .hint { margin: 0 0 12px; }
   .support .support-note { margin: 12px 0 0; font-size: 13px; }
+  /* 앱 출시 알림: 앱이 나오면 좋아지는 점 (v41) */
+  .support-benefits { margin: 0 0 12px; padding: 0; list-style: none; display: grid; gap: 6px; }
+  .support-benefits li { position: relative; padding-left: 20px; font-size: 13.5px; line-height: 1.45; }
+  .support-benefits li::before { content: '✓'; position: absolute; left: 0; color: var(--marker); font-weight: 800; }
+  .support .row { gap: 8px; flex-wrap: wrap; }
   /* 후원 카드: 구분선 아래, 점선 테두리의 작은 카드 (정식 오픈 뒤에만 보임) */
   .support-coffee { margin-top: 0; border-style: dashed; background: transparent; position: relative; }
   .support + .support-coffee { margin-top: 44px; }
