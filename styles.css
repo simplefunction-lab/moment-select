@@ -501,6 +501,7 @@
   body.immersive .controls kbd { background: transparent; color: var(--glass-ink-2); border-color: rgba(255, 255, 255, .25); }
   /* 되돌리기: 넓으면 글자를 붙이고, 방금 결정했으면 잠깐 빛난다 */
   .controls .undo .undo-label { display: none; }
+  .controls .undo { white-space: nowrap; } /* 사파리 엔진 390px에서 '되돌리기'가 두 줄로 접혔다 (v39 시험에서 발견) */
   .controls .undo.nudge { animation: nudge 1.4s var(--ease-out-3, ease-out); }
   @keyframes nudge { 0%, 100% { box-shadow: var(--glass-shine); } 18% { box-shadow: var(--glass-shine), 0 0 0 3px rgba(255, 255, 255, .55); } }
   @media (min-width: 375px) {
