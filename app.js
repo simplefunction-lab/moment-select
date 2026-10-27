@@ -179,7 +179,7 @@ const state = {
   groups: new Map(),             // 묶음 id에서 사진 id 배열로
   units: [],                     // 1차 셀렉 단위 (낱장 또는 묶음)
   expandedGroups: new Set(),     // '한 장씩 보기'로 푼 묶음
-  settings: { preset: 'wedding', target: 30, useCategories: true, crowdMin: 5, useScore: true, penalizeClosedEyes: true, share: false, together: false },
+  settings: { preset: 'wedding', target: 30, unlimited: false, useCategories: true, crowdMin: 5, useScore: true, penalizeClosedEyes: true, share: false, together: false },
   reviewers: { a: { name: t('defaultNameA'), decisions: {} }, b: { name: t('defaultNameB'), decisions: {} } }, // decisions: 사진 id에서 {status, at, addedAt, log}
   currentReviewer: 'a',
   priorModel: null,              // 사진 종류 기본값 또는 서버에서 받은 기본 모델
@@ -330,8 +330,37 @@ choosePreset(presetOrder()[0]);
 $('#category-input').onchange = (event) => $('#crowd-row').classList.toggle('hidden', !event.target.checked);
 if (COLLECT_ENDPOINT) $('#share-field').classList.remove('hidden');
 
+// 목표 장수. '제한 없이'(v39)면 무한대라 '목표보다 많음'이 없고, 위쪽은 '남긴 사진 23'만 보인다. 줄이기는 원할 때만
+const goalTarget = () => (state.settings.unlimited ? Infinity : state.settings.target);
+// 시작 화면의 장수 방식(장수 정하기 / 제한 없이)을 설정과 맞춘다. 제한 없이면 장수 칸을 흐리게
+function renderTargetMode() {
+  const unlimited = Boolean(state.settings.unlimited);
+  for (const input of document.querySelectorAll('#target-mode input')) input.checked = (input.value === 'unlimited') === unlimited;
+  $('#target-input').closest('.field').classList.toggle('target-unlimited', unlimited);
+}
+$('#target-mode').onchange = (event) => { state.settings.unlimited = event.target.value === 'unlimited'; renderTargetMode(); };
+// 고르는 중 목표 바꾸기 (위쪽 '남긴 사진'을 눌러 여는 창). 고른 사진은 그대로다
+function setGoal(target, unlimited) {
+  state.settings.target = Math.max(1, Math.round(target) || 1);
+  state.settings.unlimited = unlimited;
+  $('#target-input').value = state.settings.target;
+  $('#goal-edit-input').value = state.settings.target;
+  renderTargetMode();
+  for (const button of document.querySelectorAll('#goal-edit [data-goal]')) button.setAttribute('aria-pressed', String(unlimited ? button.dataset.goal === 'unlimited' : Number(button.dataset.goal) === state.settings.target));
+  saveProjectSoon();
+  render();
+}
+$('#goal-edit').addEventListener('toggle', (event) => { if (event.newState === 'open') setGoal(state.settings.target, Boolean(state.settings.unlimited)); });
+$('#goal-edit-input').onchange = (event) => setGoal(parseInt(event.target.value, 10), false);
+$('#goal-edit .goal-edit-presets').onclick = (event) => {
+  const button = event.target.closest('[data-goal]');
+  if (!button) return;
+  if (button.dataset.goal === 'unlimited') setGoal(state.settings.target, true); else setGoal(Number(button.dataset.goal), false);
+};
+
 function applySettingsFromForm() {
   state.settings.target = Math.max(1, parseInt($('#target-input').value, 10) || 30);
+  state.settings.unlimited = $('#target-mode input:checked')?.value === 'unlimited';
   state.settings.useCategories = $('#category-input').checked;
   state.settings.crowdMin = Math.max(3, parseInt($('#crowd-input').value, 10) || 5);
   state.settings.useScore = $('#score-input').checked;
@@ -593,6 +622,7 @@ function restoreSettingsForm(savedProject) {
   Object.assign(state.settings, savedProject.settings);
   presetTouched = true; targetTouched = true;
   $('#target-input').value = state.settings.target;
+  renderTargetMode();
   $('#category-input').checked = state.settings.useCategories;
   $('#crowd-row').classList.toggle('hidden', !state.settings.useCategories);
   $('#crowd-input').value = state.settings.crowdMin;
@@ -1273,8 +1303,40 @@ addEventListener('keydown', () => { lastInputAt = performance.now(); }, true);
 async function waitForQuietInput() {
   while (pointersDown > 0 || performance.now() - lastInputAt < 300) await new Promise((resolve) => setTimeout(resolve, 60));
 }
+// 분석 화면의 분석한 사진 격자 (v39): 분석이 끝난 사진이 한 장씩 채워진다. 최근 40장만 두고, 뒤에 반짝이는 빈칸 8개
+const MOSAIC_MAX = 40, MOSAIC_GHOSTS = 8;
+let analyzeFound = { faces: 0, eyes: 0, done: 0 };
+function resetAnalyzeMosaic() {
+  analyzeFound = { faces: 0, eyes: 0, done: 0 };
+  $('#analyze-mosaic').innerHTML = '<span class="ghost"></span>'.repeat(MOSAIC_GHOSTS);
+  $('#analyze-found-short').textContent = '';
+}
+function addAnalyzedTile(photo) {
+  const faces = photo.analysis?.faces ?? [];
+  analyzeFound.done++;
+  if (faces.length) analyzeFound.faces++;
+  if (faces.some((face) => face.eyesClosed)) analyzeFound.eyes++;
+  $('#analyze-found-short').textContent = t('guideFoundShort', analyzeFound);
+  if (!photo.thumbUrl) return;
+  const mosaic = $('#analyze-mosaic');
+  mosaic.querySelector('img.new')?.classList.remove('new');
+  const image = document.createElement('img');
+  image.src = photo.thumbUrl; image.alt = ''; image.className = 'new';
+  mosaic.insertBefore(image, mosaic.querySelector('.ghost'));
+  const tiles = mosaic.querySelectorAll('img');
+  if (tiles.length > MOSAIC_MAX) tiles[0].remove();
+}
+$('#analyze-guide-open').onclick = () => {
+  $('#guide-faces').textContent = num(analyzeFound.faces);
+  $('#guide-eyes').textContent = num(analyzeFound.eyes);
+  $('#guide-done').textContent = num(analyzeFound.done);
+  $('#analyze-guide').showModal();
+};
+$('#analyze-guide-close').onclick = () => $('#analyze-guide').close();
+
 async function analyzeAll() {
   state.analysisDone = false;
+  resetAnalyzeMosaic();
   state.earlyPicking = false;
   state.analysisProgress = { done: 0, total: state.photos.length };
   $('#analyze-start-row').classList.add('hidden');
@@ -1322,6 +1384,7 @@ async function analyzeAll() {
       photo.analysis = { focusSharpness: 0, noise: 0, light: { mean: 128, brightClip: 0, darkClip: 0 }, hash: [0, 0], faces: null, failed: true };
     }
     finishedCount++;
+    addAnalyzedTile(photo);
     if (finishedCount === 1) rateStartedAt = performance.now();
     const remainingSeconds = finishedCount <= ETA_WARMUP_PHOTOS ? null
       : Math.round(((performance.now() - rateStartedAt) / 1000 / (finishedCount - 1)) * (totalCount - finishedCount));
@@ -2008,12 +2071,14 @@ function renderTopbar() {
   // 내보내기 화면에서 기준이 나와 다르면(둘 다, 한 명이라도, 상대) 위쪽 숫자도 그 기준으로 내보낼 장수
   const exportCount = state.view === 'export' && exportBasis && exportBasis !== state.currentReviewer;
   const keepCount = ready ? (exportCount ? selectionIds(exportBasis).length : keepIds().length) : 0;
-  const target = state.settings.target;
+  const target = goalTarget();
   $('#tab-first').textContent = ready ? num(undecidedCount()) : '';
   $('#tab-keep').textContent = ready ? num(keepIds().length) : '';
   $('#tab-drop').textContent = ready ? num(dropIds().length) : '';
   $('#goal-count').textContent = num(keepCount);
-  $('#goal-target').textContent = num(target);
+  $('#goal-target').textContent = Number.isFinite(target) ? num(target) : '';
+  $('#goal-of').hidden = !Number.isFinite(target); // 제한 없이: '남긴 사진 23'만
+  $('#goal').classList.toggle('unlimited', !Number.isFinite(target));
   $('#goal').classList.toggle('hidden', !ready); // 사진을 불러오기 전 시작 화면에서는 '남긴 사진 0 / 목표'를 숨긴다
   $('#tabs').classList.toggle('hidden', !ready);  // 아직 누를 수 없는 단계 탭도 숨긴다
   $('#goal').classList.toggle('over', keepCount > target);
@@ -2027,7 +2092,7 @@ function renderTopbar() {
   previousKeepCount = ready && !exportCount ? keepCount : null;
   $('#goal [data-i18n="goalKept"]').textContent = exportCount ? t('goalExport') : t('goalKept');
   $('#goal-note').textContent = keepCount > target ? t('goalOver', keepCount - target) : '';
-  $('#goal-meter').style.width = `${Math.min(100, (keepCount / target) * 100)}%`;
+  $('#goal-meter').style.width = Number.isFinite(target) ? `${Math.min(100, (keepCount / target) * 100)}%` : '0%';
   const toggle = $('#reviewer-toggle');
   toggle.classList.toggle('hidden', !ready || !pickingAsTwo());
   toggle.innerHTML = Object.entries(state.reviewers)
@@ -2183,7 +2248,7 @@ function renderPickView() {
   for (const button of document.querySelectorAll('#view-count button')) button.setAttribute('aria-checked', String(Number(button.dataset.count) === viewCount));
   const stage = $('#stage');
   const keepCount = keepIds().length;
-  const target = state.settings.target;
+  const target = goalTarget();
 
   if (mode === 'first') {
     renderFilters(state.photos);
@@ -2229,7 +2294,9 @@ function renderPickView() {
   if (mode === 'distill') {
     renderFilters(keepIds().map((id) => state.photoById.get(id)));
     const queue = distillQueue();
-    setNotice(keepCount > target
+    setNotice(!Number.isFinite(target)
+      ? t('noticeDistillUnlimited')
+      : keepCount > target
       ? t('noticeDistillOver', keepCount - target)
       : keepCount < target
         ? t('noticeDistillUnder', { target, count: target - keepCount })
@@ -2432,8 +2499,8 @@ function decidePhoto(photo, status, stageName) {
     if (!state.undoStack.includes(undoEntry)) state.undoStack.push(undoEntry);
     markRoundSeen('rescue', [photo.id], undoEntry);
     const keepCount = keepIds().length;
-    if (status === 'keep' && keepCount > state.settings.target) {
-      showToast(t('rescuedOver', keepCount - state.settings.target), [{ label: t('goDistill'), run: () => setView('distill') }], 5500);
+    if (status === 'keep' && keepCount > goalTarget()) {
+      showToast(t('rescuedOver', keepCount - goalTarget()), [{ label: t('goDistill'), run: () => setView('distill') }], 5500);
     }
   } else {
     recordDecisions([{ id: photo.id, status }], 'first');
@@ -3874,7 +3941,7 @@ function renderExportView() {
       </div>
       <div class="row">
         <label for="export-target" class="hint">${t('targetLabel')}</label><span class="stepper"><button type="button" class="step" data-step="-1" aria-label="${t('stepDown')}"><i class="ph ph-minus" aria-hidden="true"></i></button><input type="number" id="export-target" min="1" value="${target}" inputmode="numeric"><button type="button" class="step" data-step="1" aria-label="${t('stepUp')}"><i class="ph ph-plus" aria-hidden="true"></i></button></span>
-        <span class="hint">${ids.length > target ? t('targetOver', ids.length - target) : ids.length < target ? t('targetUnder', target - ids.length) : t('targetExact')}${closedEyeCount ? t('eyesInList', closedEyeCount) : ''}</span>
+        <span class="hint">${state.settings.unlimited ? t('targetUnlimitedNote') : ids.length > target ? t('targetOver', ids.length - target) : ids.length < target ? t('targetUnder', target - ids.length) : t('targetExact')}${closedEyeCount ? t('eyesInList', closedEyeCount) : ''}</span>
       </div>
     </section>
 
@@ -3910,7 +3977,7 @@ function renderExportView() {
   if ($('#organize-run')) $('#organize-run').onclick = () => organizeFolder(ids);
   if ($('#organize-undo')) $('#organize-undo').onclick = undoOrganize;
   if ($('#basis-options')) { markCheckedLabels($('#basis-options')); $('#basis-options').onchange = (event) => { exportBasis = event.target.value; render(); }; }
-  $('#export-target').onchange = (event) => { state.settings.target = Math.max(1, parseInt(event.target.value, 10) || 1); saveProjectSoon(); render(); };
+  $('#export-target').onchange = (event) => setGoal(parseInt(event.target.value, 10), false); // 숫자를 바꾸면 '제한 없이'도 풀린다
   $('#export-list').onclick = async () => {
     // http로 연 주소나 권한이 막힌 브라우저는 클립보드를 쓸 수 없다. 그때는 목록 파일로 내려받는다
     try {
