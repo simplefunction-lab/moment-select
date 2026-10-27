@@ -3414,6 +3414,7 @@ $('#fullscreen').addEventListener('keydown', (event) => {
     if (Math.abs(dx) > area.clientWidth * 0.25) decideFromFullscreen(dx > 0 ? 'keep' : 'drop');
   };
   area.addEventListener('pointerup', end);
+  area.addEventListener('dragstart', (event) => event.preventDefault()); // 파이어폭스: 사진을 끌면 그림 끌어 옮기기가 시작되어 밀기가 취소됐다
   area.addEventListener('pointercancel', () => { start = null; $('img', area).style.transform = ''; });
 }
 
