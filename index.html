@@ -34,7 +34,7 @@
   <!-- 고르는 동안 뒤에서 분석이 계속될 때의 진행 -->
   <div class="bg-analysis hidden" id="bg-analysis"><span class="num" id="bg-analysis-text"></span><span class="bg-meter"><span id="bg-analysis-meter"></span></span></div>
   <div class="goal" id="goal">
-    <div class="goal-line"><span><span data-i18n="goalKept">Kept</span> <b class="num" id="goal-count">0</b> / <span class="num" id="goal-target">0</span><span data-i18n="goalUnit"></span></span><span class="goal-note num" id="goal-note"></span></div>
+    <button class="goal-line" id="goal-edit-open" type="button" popovertarget="goal-edit" title="Change your goal" data-i18n-title="goalEditTitle"><span><span data-i18n="goalKept">Kept</span> <b class="num" id="goal-count">0</b><span id="goal-of"> / <span class="num" id="goal-target">0</span><span data-i18n="goalUnit"></span></span></span><span class="goal-note num" id="goal-note"></span><svg class="goal-caret" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
     <div class="goal-meter"><span id="goal-meter"></span></div>
   </div>
 </header>
@@ -70,6 +70,11 @@
           <label for="target-input" data-i18n="fieldTarget">Photos to keep</label>
           <div class="control">
             <div class="inline"><span class="stepper"><button type="button" class="step" data-step="-1" aria-label="Fewer" data-i18n-aria="stepDown"><i class="ph ph-minus" aria-hidden="true"></i></button><input type="number" id="target-input" min="1" value="20" inputmode="numeric"><button type="button" class="step" data-step="1" aria-label="More" data-i18n-aria="stepUp"><i class="ph ph-plus" aria-hidden="true"></i></button></span><span class="hint" id="target-hint">Fits one Instagram carousel. You can change this anytime.</span></div>
+            <!-- 장수 방식 (v39): 목표 장수까지 줄이거나, 제한 없이 마음에 드는 것만. 고르는 중에도 위쪽 숫자를 눌러 바꿀 수 있다 -->
+            <div class="target-mode" id="target-mode" role="radiogroup" aria-label="How many to keep" data-i18n-aria="fieldTarget">
+              <label class="target-choice"><input type="radio" name="target-mode" value="count" checked><span><b data-i18n="targetModeCount">Set a number</b><small data-i18n="targetModeCountHint">Narrow down to this many.</small></span></label>
+              <label class="target-choice"><input type="radio" name="target-mode" value="unlimited"><span><b data-i18n="targetModeUnlimited">No limit</b><small data-i18n="targetModeUnlimitedHint">Keep only the ones you like. Narrow down only if you want.</small></span></label>
+            </div>
           </div>
         </div>
         <!-- 혼자 고르는지 둘이 고르는지. 둘이면 이름 두 칸이 바로 나온다 -->
@@ -157,6 +162,9 @@
       <!-- 첫 100장이 분석되면: 분석이 끝나기 전에 고르기 시작 (나머지는 뒤에서 계속 분석) -->
       <div class="analyze-start hidden" id="analyze-start-row"><button class="button primary" id="analyze-start" data-i18n="analyzeStart">Start picking now</button><span class="hint" id="analyze-start-hint"></span></div>
       <p class="hint analyze-note hidden" id="analyze-note"></p>
+      <!-- 분석한 사진 (v39): 분석이 끝난 사진이 격자에 한 장씩 채워진다. 칸 수는 화면 폭에 맞춘다. 위의 접힌 줄을 누르면 고르는 법과 찾은 것 -->
+      <button class="analyze-fold" id="analyze-guide-open" type="button"><span><b data-i18n="guideFold">How to pick · found so far</b> <span class="hint num" id="analyze-found-short"></span></span><span class="analyze-fold-open"><span data-i18n="guideOpen">Open</span> <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></span></button>
+      <div class="analyze-mosaic" id="analyze-mosaic" aria-hidden="true"></div>
     </div>
   </section>
 
@@ -205,6 +213,24 @@
   <div class="film-grid-head"><h2 id="score-why-title"></h2><button class="button" id="score-why-close" type="button" data-i18n="whyClose">Close</button></div>
   <p class="hint" data-i18n="whyHint">Compared within this set. A longer bar is better within the set. Small real differences show as “about the same”.</p>
   <div class="score-why-body" id="score-why-body"></div>
+</dialog>
+<!-- 목표 장수 바꾸기 (v39): 위쪽 '남긴 사진'을 누르면 열린다. 고른 사진은 그대로 -->
+<div id="goal-edit" popover role="dialog" aria-labelledby="goal-edit-title">
+  <h2 id="goal-edit-title" data-i18n="goalEditTitle">Change your goal</h2>
+  <p class="hint" data-i18n="goalEditNote">Your picks stay. You do not start over.</p>
+  <div class="goal-edit-row"><span class="stepper"><button type="button" class="step" data-step="-1" aria-label="Fewer" data-i18n-aria="stepDown"><i class="ph ph-minus" aria-hidden="true"></i></button><input type="number" id="goal-edit-input" min="1" value="20" inputmode="numeric" aria-label="Photos to keep" data-i18n-aria="fieldTarget"><button type="button" class="step" data-step="1" aria-label="More" data-i18n-aria="stepUp"><i class="ph ph-plus" aria-hidden="true"></i></button></span></div>
+  <div class="row goal-edit-presets"><button type="button" class="button" data-goal="20">20</button><button type="button" class="button" data-goal="30">30</button><button type="button" class="button" data-goal="50">50</button><button type="button" class="button" data-goal="unlimited" id="goal-edit-unlimited" data-i18n="targetModeUnlimited">No limit</button></div>
+</div>
+<!-- 분석 화면 '고르는 법 · 찾은 것' 판 (v39): 접힌 줄을 누르면 아래에서 올라온다 -->
+<dialog class="score-why analyze-guide" id="analyze-guide" aria-labelledby="analyze-guide-title">
+  <div class="film-grid-head"><h2 id="analyze-guide-title" data-i18n="guideTitle">How to pick</h2><button class="button" id="analyze-guide-close" type="button" data-i18n="whyClose">Close</button></div>
+  <div class="guide-tips">
+    <div class="guide-tip"><span class="guide-ic keep">→</span><span><b data-i18n="guideKeep">Swipe right to keep</b><small data-i18n="guideKeepHint">The button or the → key works too.</small></span></div>
+    <div class="guide-tip"><span class="guide-ic drop">←</span><span><b data-i18n="guideDrop">Swipe left to drop</b><small data-i18n="guideDropHint">Made a mistake? Undo.</small></span></div>
+    <div class="guide-tip"><span class="guide-ic set">▦</span><span><b data-i18n="guideSet">Similar shots come as a set</b><small data-i18n="guideSetHint">Tap only the ones you like.</small></span></div>
+  </div>
+  <h3 class="guide-found-title" data-i18n="guideFound">Found so far</h3>
+  <div class="guide-found"><div><b class="num" id="guide-faces">0</b><span data-i18n="guideFaces">With faces</span></div><div><b class="num" id="guide-eyes">0</b><span data-i18n="guideEyes">Closed eyes</span></div><div><b class="num" id="guide-done">0</b><span data-i18n="guideDone">Analyzed</span></div></div>
 </dialog>
 <div id="criteria" popover role="dialog" aria-label="Scoring" data-i18n-aria="criteriaButton"></div>
 <div id="cast" popover role="dialog" aria-label="Main people" data-i18n-aria="castTitle"></div>
