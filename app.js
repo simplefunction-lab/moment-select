@@ -8,6 +8,7 @@
 
 import { t, num, getLanguage, setLanguage, applyStaticText, presetText, featureLabel, categoryLabel, allExportPrefixes, isDefaultName } from './i18n.js';
 import { buildAestheticModel, scoreAesthetic, AESTHETIC_INPUT } from './aesthetic.js';
+import { simSignature, compareSignatures, isSimilarMatch, SIM_GRAY_W, SIM_GRAY_H, SIM_COLOR_W, SIM_COLOR_H } from './similarity.js';
 import { measurePixels, toGrayscale, laplacianVariance, luminanceStats } from './pixel-math.js';
 // 스와이프 물리(스프링)와 목표 장수 축하. 둘 다 앱과 함께 배포한다 (vendor/LICENSES.txt)
 import { animate } from './vendor/motion/motion-animate.mjs';
@@ -108,9 +109,7 @@ const EYE_BLINK_CLOSED = 0.5;             // 정밀 모델의 eyeBlinkLeft, eyeB
 const EYE_MESH_MIN_FACE_PX = 40;          // 정밀 모델로 볼 얼굴의 최소 높이 (분석용 크기 기준)
 const EYE_MESH_MAX_FACES = 6;             // 사진마다 정밀 모델로 볼 큰 얼굴 수
 const EYE_MESH_CROP = 1.8;                // 얼굴 상자의 이 배수만큼 잘라서 넘긴다
-const SIMILAR_HASH_DISTANCE = 12;       // dHash 차이가 이 이하면 바로 비슷한 컷
-const SIMILAR_HASH_LOOSE = 22;          // 이 이하이면서 작은 흑백 이미지 상관도가 높으면 비슷한 컷 (구도가 조금 바뀐 경우)
-const SIMILAR_CORRELATION = 0.6;        // 16x12 흑백 이미지 상관도 기준
+const SIMILAR_HASH_DISTANCE = 12;       // 비교용 값이 없는 사진(썸네일을 못 읽음)은 dHash 차이가 이 이하일 때만 비슷한 컷
 const SIMILAR_TIME_GAP_MS = 90_000;     // 촬영 시각이 이 간격 안이어야 같은 묶음 (시각 정보가 있을 때)
 const SIMILAR_WINDOW = 8;               // 촬영 순서로 앞쪽 몇 장까지 비교할지
 const GROUP_MAX_SIZE = 12;
@@ -120,7 +119,7 @@ const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시�
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
 const CACHE_VERSION = 'v5';             // 분석 방식이 바뀌면 올린다 (v5: 같은 사람 알아보기, 미적 점수)
-const APP_VERSION = 'v36';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
+const APP_VERSION = 'v37';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
 const DECODE_AHEAD = isTouchDevice ? 1 : 2;  // 분석하는 동안 미리 풀어 둘 다음 사진 수 (휴대폰은 메모리 때문에 1장)
 const ETA_WARMUP_PHOTOS = 3;             // 이만큼 분석하기 전에는 남은 시간을 보여주지 않는다 (첫 장은 모델 준비로 느리다)
 const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
@@ -923,7 +922,55 @@ function tinyLumaVector() {
   const length = Math.hypot(...centered) || 1;
   return centered.map((value) => Math.round((value / length) * 10000) / 10000);
 }
-const correlation = (leftVector, rightVector) => leftVector.reduce((sum, value, index) => sum + value * rightVector[index], 0);
+
+// 비슷한 사진 비교용 값: 썸네일(긴 변 480px)에서 만든다. 저장된 썸네일만 있는 옛 프로젝트도 같은 값을 얻는다.
+// 반씩 줄여 128px 이하로 만든 뒤 흑백용 64x48, 색용 32x24로 줄인다 (가로세로 비율은 맞추지 않는다)
+const simGrayCanvas = document.createElement('canvas');
+simGrayCanvas.width = SIM_GRAY_W; simGrayCanvas.height = SIM_GRAY_H;
+const simGrayContext = simGrayCanvas.getContext('2d', { willReadFrequently: true });
+const simColorCanvas = document.createElement('canvas');
+simColorCanvas.width = SIM_COLOR_W; simColorCanvas.height = SIM_COLOR_H;
+const simColorContext = simColorCanvas.getContext('2d', { willReadFrequently: true });
+async function similaritySignatureOf(thumbBlob) {
+  let bitmap;
+  try { bitmap = await createImageBitmap(thumbBlob); } catch { return null; }
+  let source = bitmap, width = bitmap.width, height = bitmap.height;
+  const stepCanvas = document.createElement('canvas');
+  const stepContext = stepCanvas.getContext('2d', { willReadFrequently: true });
+  const holdCanvas = document.createElement('canvas');
+  const holdContext = holdCanvas.getContext('2d', { willReadFrequently: true });
+  while (Math.max(width, height) > 128) {
+    width = Math.max(1, Math.round(width / 2)); height = Math.max(1, Math.round(height / 2));
+    stepCanvas.width = width; stepCanvas.height = height;
+    stepContext.imageSmoothingQuality = 'high';
+    stepContext.drawImage(source, 0, 0, width, height);
+    holdCanvas.width = width; holdCanvas.height = height;
+    holdContext.drawImage(stepCanvas, 0, 0);
+    source = holdCanvas;
+  }
+  simGrayContext.imageSmoothingQuality = 'high';
+  simGrayContext.drawImage(source, 0, 0, SIM_GRAY_W, SIM_GRAY_H);
+  simColorContext.imageSmoothingQuality = 'high';
+  simColorContext.drawImage(simGrayCanvas, 0, 0, SIM_COLOR_W, SIM_COLOR_H);
+  bitmap.close();
+  return simSignature(simGrayContext.getImageData(0, 0, SIM_GRAY_W, SIM_GRAY_H).data, simColorContext.getImageData(0, 0, SIM_COLOR_W, SIM_COLOR_H).data);
+}
+// 쌍마다 비교 결과를 기억한다 (비교용 값 객체가 열쇠라 사진 id가 바뀌어도 맞다)
+const similarityMemo = new WeakMap();
+function similarityOf(leftPhoto, rightPhoto) {
+  const left = leftPhoto.analysis.sim, right = rightPhoto.analysis.sim;
+  let row = similarityMemo.get(left);
+  if (!row) similarityMemo.set(left, row = new WeakMap());
+  let match = row.get(right);
+  if (!match) {
+    match = compareSignatures(left, right);
+    row.set(right, match);
+    let back = similarityMemo.get(right);
+    if (!back) similarityMemo.set(right, back = new WeakMap());
+    back.set(left, match);
+  }
+  return match;
+}
 
 function popCount(word) { word -= (word >>> 1) & 0x55555555; word = (word & 0x33333333) + ((word >>> 2) & 0x33333333); return (((word + (word >>> 4)) & 0x0f0f0f0f) * 0x01010101) >>> 24; }
 const hashDistance = (leftHash, rightHash) => popCount((leftHash[0] ^ rightHash[0]) >>> 0) + popCount((leftHash[1] ^ rightHash[1]) >>> 0);
@@ -1118,6 +1165,11 @@ async function analyzeOne(photo, prepared = preparePhoto(photo)) {
   if (cached) {
     Object.assign(photo, { takenAt: cached.takenAt, width: cached.width, height: cached.height, analysis: cached.analysis });
     photo.thumbUrl = URL.createObjectURL(cached.thumbBlob);
+    // v37 전에 저장한 분석에는 비교용 값이 없다. 저장된 썸네일에서 만들어 함께 저장한다
+    if (!('sim' in cached.analysis)) {
+      cached.analysis.sim = await similaritySignatureOf(cached.thumbBlob);
+      dbSet(cacheKey, cached);
+    }
     return;
   }
   let takenAt = null;
@@ -1160,6 +1212,7 @@ async function analyzeOne(photo, prepared = preparePhoto(photo)) {
     tiny: tinyLumaVector(),
     faces: await analyzeFaces(gray, smooth, width, height, noiseFloor, light.mean), // null이면 얼굴 분석을 하지 않음
     aesthetic: await aestheticOfAnalysisCanvas(), // {mean, std} 1~10점, null이면 계산하지 않음
+    sim: await similaritySignatureOf(thumbBlob),  // 비슷한 사진 비교용 {gray, color}, null이면 썸네일을 못 읽음
   };
   photo.takenAt = takenAt;
   photo.thumbUrl = URL.createObjectURL(thumbBlob);
@@ -1635,14 +1688,17 @@ function categoryOf(photo) {
 }
 const hasClosedEyes = (photo) => mainFacesOf(photo).some((face) => face.eyesClosed);
 
-// 두 사진이 같은 순간의 비슷한 컷인지: 해시가 아주 가깝거나, 조금 멀어도 전체 명암 배치가 닮았으면
+// 두 사진이 같은 장면의 비슷한 컷인지: 구도(키우고 옮겨 맞춘 흑백 상관)와 색(주변 8칸)을 본다 (similarity.js).
+// dHash로 후보를 거르지 않는다. 같은 쌍의 dHash 차이가 크롬과 사파리에서 최대 17 달랐고, 같은 장면인데 44인 쌍도 있었다
 function looksSimilar(leftPhoto, rightPhoto) {
   if (leftPhoto.analysis.failed || rightPhoto.analysis.failed) return false;
-  const distance = hashDistance(leftPhoto.analysis.hash, rightPhoto.analysis.hash);
-  if (distance <= SIMILAR_HASH_DISTANCE) return true;
-  if (distance > SIMILAR_HASH_LOOSE || !leftPhoto.analysis.tiny || !rightPhoto.analysis.tiny) return false;
-  return correlation(leftPhoto.analysis.tiny, rightPhoto.analysis.tiny) >= SIMILAR_CORRELATION;
+  if (!leftPhoto.analysis.sim || !rightPhoto.analysis.sim) return hashDistance(leftPhoto.analysis.hash, rightPhoto.analysis.hash) <= SIMILAR_HASH_DISTANCE;
+  return isSimilarMatch(similarityOf(leftPhoto, rightPhoto));
 }
+// 비교 상대를 고를 때 순서: 구도가 더 잘 맞는 사진 먼저 (비교용 값이 없으면 dHash가 가까운 사진 먼저)
+const similarityRank = (photo, other) => (photo.analysis.sim && other.analysis.sim
+  ? -similarityOf(photo, other).structure
+  : hashDistance(photo.analysis.hash, other.analysis.hash));
 
 // 비슷한 컷 묶기: 촬영 순서로 앞쪽 여러 장과 비교해서 이어지는 것끼리 한 묶음으로 합친다 (union-find)
 // 바로 옆 사진만 비교하던 방식은 사이에 다른 사진이 끼거나 몇십 초 뒤에 다시 찍은 컷을 놓쳤다
@@ -2835,7 +2891,6 @@ function renderBurst(stage, unit) {
 }
 
 // ---------- 이미 남긴 비슷한 사진과 비교 ----------
-const SIMILAR_KEPT_HASH_LOOSE = 26;            // 비교를 권할 때는 묶기보다 조금 너그럽게 (결정은 사람이 하므로)
 const SIMILAR_KEPT_TIME_GAP_MS = 10 * 60_000;  // 촬영 시각이 10분 넘게 떨어지면 비교하지 않는다
 const singleViewIds = new Set();               // 사용자가 '한 장만 보기'를 고른 사진 (이번 방문 동안)
 let keptCompareCursor = { photoId: null, index: 0 }; // 비슷한 남긴 사진이 여러 장일 때 지금 보여주는 순번
@@ -2847,12 +2902,9 @@ function similarKeptPhotos(photo) {
     .map((id) => state.photoById.get(id))
     .filter((other) => {
       if (photo.takenAt && other.takenAt && Math.abs(photo.takenAt - other.takenAt) > SIMILAR_KEPT_TIME_GAP_MS) return false;
-      if (other.analysis.failed) return false;
-      const distance = hashDistance(photo.analysis.hash, other.analysis.hash);
-      if (distance <= SIMILAR_HASH_DISTANCE) return true;
-      return distance <= SIMILAR_KEPT_HASH_LOOSE && photo.analysis.tiny && other.analysis.tiny && correlation(photo.analysis.tiny, other.analysis.tiny) >= SIMILAR_CORRELATION;
+      return looksSimilar(photo, other);
     })
-    .sort((left, right) => hashDistance(photo.analysis.hash, left.analysis.hash) - hashDistance(photo.analysis.hash, right.analysis.hash));
+    .sort((left, right) => similarityRank(photo, left) - similarityRank(photo, right));
 }
 
 function renderKeptCompare(stage, currentPhoto, keptLookalikes, stageName) {
@@ -4027,7 +4079,7 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
 }
 // 진단용: ?debug=1 이면 콘솔에서 상태를 볼 수 있게 한다 (사진 데이터는 이 기기 안에만 있다)
 if (new URLSearchParams(location.search).get('debug') === '1') {
-  window.momentSelectDebug = { APP_VERSION, state, faceEngine, aestheticEngine, eyeEngine, hashDistance, correlation, looksSimilar, similarKeptPhotos, scoreAccuracy, trainingPairs, learningEvidence, effectiveCastKeys, firstPassQueue, distillQueue, comparePair, categoryOf, isLastKeptOfScene, activeModel, diagnosticsText, get probeUnitKey() { return probeUnitKey; } };
+  window.momentSelectDebug = { APP_VERSION, state, faceEngine, aestheticEngine, eyeEngine, hashDistance, looksSimilar, similarityOf, compareSignatures, similarKeptPhotos, scoreAccuracy, trainingPairs, learningEvidence, effectiveCastKeys, firstPassQueue, distillQueue, comparePair, categoryOf, isLastKeptOfScene, activeModel, diagnosticsText, get probeUnitKey() { return probeUnitKey; } };
 }
 // 시작 화면 아래 의견 링크
 if (FEEDBACK_URL) { $('#feedback-link').href = feedbackUrl(); $('#feedback-link').hidden = false; }
