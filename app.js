@@ -123,7 +123,7 @@ const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시�
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
 const CACHE_VERSION = 'v5';             // 분석 방식이 바뀌면 올린다 (v5: 같은 사람 알아보기, 미적 점수)
-const APP_VERSION = 'v41';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
+const APP_VERSION = 'v42';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
 const DECODE_AHEAD = isTouchDevice ? 1 : 2;  // 분석하는 동안 미리 풀어 둘 다음 사진 수 (휴대폰은 메모리 때문에 1장)
 const ETA_WARMUP_PHOTOS = 3;             // 이만큼 분석하기 전에는 남은 시간을 보여주지 않는다 (첫 장은 모델 준비로 느리다)
 const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
@@ -341,7 +341,7 @@ if (COLLECT_ENDPOINT) $('#share-field').classList.remove('hidden');
 
 // 목표 장수. '제한 없이'(v39)면 무한대라 '목표보다 많음'이 없고, 위쪽은 '남긴 사진 23'만 보인다. 줄이기는 원할 때만
 const goalTarget = () => (state.settings.unlimited ? Infinity : state.settings.target);
-// 시작 화면의 장수 방식(장수 정하기 / 제한 없이)을 설정과 맞춘다. 제한 없이면 장수 칸을 흐리게
+// 시작 화면의 장수 방식(장수 정하기 / 제한 없이)을 설정과 맞춘다. 제한 없이면 장수 칸 대신 '제한 없음'(v42)
 function renderTargetMode() {
   const unlimited = Boolean(state.settings.unlimited);
   for (const input of document.querySelectorAll('#target-mode input')) input.checked = (input.value === 'unlimited') === unlimited;

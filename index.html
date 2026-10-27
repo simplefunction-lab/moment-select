@@ -73,7 +73,7 @@
         <div class="field">
           <label for="target-input" data-i18n="fieldTarget">Photos to keep</label>
           <div class="control">
-            <div class="inline"><span class="stepper"><button type="button" class="step" data-step="-1" aria-label="Fewer" data-i18n-aria="stepDown"><i class="ph ph-minus" aria-hidden="true"></i></button><input type="number" id="target-input" min="1" value="20" inputmode="numeric"><button type="button" class="step" data-step="1" aria-label="More" data-i18n-aria="stepUp"><i class="ph ph-plus" aria-hidden="true"></i></button></span><span class="hint" id="target-hint">Fits one Instagram carousel. You can change this anytime.</span></div>
+            <div class="inline"><span class="stepper"><button type="button" class="step" data-step="-1" aria-label="Fewer" data-i18n-aria="stepDown"><i class="ph ph-minus" aria-hidden="true"></i></button><input type="number" id="target-input" min="1" value="20" inputmode="numeric"><button type="button" class="step" data-step="1" aria-label="More" data-i18n-aria="stepUp"><i class="ph ph-plus" aria-hidden="true"></i></button></span><span class="target-none" id="target-none" data-i18n="targetNone">No limit</span><span class="hint" id="target-hint">Fits one Instagram carousel. You can change this anytime.</span></div>
             <!-- 장수 방식 (v39): 목표 장수까지 줄이거나, 제한 없이 마음에 드는 것만. 고르는 중에도 위쪽 숫자를 눌러 바꿀 수 있다 -->
             <div class="target-mode" id="target-mode" role="radiogroup" aria-label="How many to keep" data-i18n-aria="fieldTarget">
               <label class="target-choice"><input type="radio" name="target-mode" value="count" checked><span><b data-i18n="targetModeCount">Set a number</b><small data-i18n="targetModeCountHint">Narrow down to this many.</small></span></label>
