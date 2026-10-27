@@ -446,6 +446,10 @@
   /* ---------- 분석 화면: 진행 막대만 (사진은 그리지 않아 분석에 자원을 다 쓴다) ---------- */
   .analyze-meter { height: 8px; border-radius: 8px; overflow: hidden; }
   .analyze-meter span { background: var(--keep-gradient); }
+  /* 진행 중 표시 (v39): 처음 몇 장을 불러오는 동안 막대가 비어 있어 멈춘 것처럼 보였다. 빛이 1.4초마다 왼쪽에서 오른쪽으로 지나간다 */
+  .analyze-meter { position: relative; }
+  .analyze-meter::after { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg, transparent 20%, rgba(200, 38, 28, .30) 50%, transparent 80%); transform: translateX(-100%); animation: meter-shine 1.4s ease-in-out infinite; pointer-events: none; }
+  @keyframes meter-shine { to { transform: translateX(100%); } }
 
   /* ---------- 고르기 화면 (immersive) ---------- */
   #ambient { position: fixed; inset: 0; z-index: 0; display: none; background: var(--night); overflow: hidden; }
@@ -780,4 +784,5 @@
   }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; }
+    .analyze-meter::after { display: none; } /* 동작 줄이기: 반짝임 없음 */
   }
