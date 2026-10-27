@@ -133,6 +133,11 @@
   .analyze { max-width: 960px; margin: 0 auto; padding: 40px 24px; }
   .analyze-head { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
   .analyze-meter { height: 3px; background: var(--sunken); margin: 16px 0 20px; }
+  .analyze-option { display: flex; align-items: center; gap: 14px; margin: 4px 0 18px; padding: 14px 16px; border: 1px solid var(--rule); border-radius: 14px; background: var(--surface); max-width: 62ch; }
+  .analyze-option-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .analyze-option-text .hint { font-size: 13px; }
+  .analyze-option .button { flex-shrink: 0; gap: 6px; }
+  .analyze-option .button:disabled { opacity: .55; }
   .analyze-meter span { display: block; height: 100%; width: 0; background: var(--ink); transition: width .15s linear; }
   /* 모델 받는 동안: 무엇을 받는지, 사진은 안 나간다는 안내 */
   .analyze-note { margin: -8px 0 16px; max-width: 62ch; }
@@ -199,6 +204,48 @@
   .filmstrip button.current { outline: 2px solid var(--ink); outline-offset: 1px; }
   .filmstrip button .count { position: absolute; right: 3px; bottom: 3px; background: rgba(24, 27, 28, .85); color: #fff; font-size: 11px; padding: 0 4px; border-radius: 3px; }
   .filmstrip .more { color: var(--ink-2); font-size: 12px; padding: 0 6px; white-space: nowrap; }
+  /* 사진 줄: 왼쪽·오른쪽 화살표와 펼치기 버튼이 줄 양옆에 붙는다 */
+  .filmbar { display: flex; align-items: center; gap: 6px; padding: 0 8px; background: var(--sunken); }
+  .filmbar[hidden] { display: none; }
+  .filmbar .filmstrip { flex: 1; min-width: 0; padding-left: 4px; padding-right: 4px; background: transparent; scroll-behavior: smooth; }
+  .film-nav, .film-expand { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; height: 50px; border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); color: var(--ink); cursor: pointer; }
+  .film-nav { width: 34px; padding: 0; }
+  .film-nav:disabled { opacity: .35; cursor: default; }
+  .film-expand { flex-direction: column; gap: 1px; padding: 0 8px; font: inherit; font-size: 11px; }
+  body.immersive .filmbar { background: transparent; padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+  body.immersive .filmbar .filmstrip { padding-bottom: 0; }
+  body.immersive .film-nav, body.immersive .film-expand { background: var(--glass); border-color: var(--glass-line); color: var(--glass-ink, #fff); }
+  /* 펼친 격자: 화면 아래에서 올라오는 판 */
+  .film-grid { width: min(720px, 100vw); max-width: 100vw; max-height: 86vh; margin: auto auto 0; padding: 16px; border: none; border-radius: 18px 18px 0 0; background: var(--surface); color: var(--ink); }
+  .film-grid::backdrop { background: rgba(10, 12, 13, .55); }
+  .film-grid-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+  .film-grid-head h2 { margin: 0; font-size: 18px; }
+  .film-grid-body { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 6px; overflow-y: auto; max-height: calc(86vh - 120px); }
+  .film-grid-body button { position: relative; padding: 0; border: none; border-radius: 8px; overflow: hidden; aspect-ratio: 1; background: var(--rule); cursor: pointer; }
+  .film-grid-body img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .film-grid-body button.current { outline: 3px solid var(--marker); outline-offset: -3px; }
+  .film-grid-body .order { position: absolute; left: 4px; top: 4px; font-size: 11px; background: rgba(0, 0, 0, .55); color: #fff; padding: 1px 5px; border-radius: 6px; }
+  .film-grid-body .count { position: absolute; right: 4px; bottom: 4px; font-size: 11px; background: rgba(24, 27, 28, .85); color: #fff; padding: 0 4px; border-radius: 3px; }
+  .film-grid .hint { margin: 10px 0 0; font-size: 13px; }
+  /* 묶음 점수 근거 판 */
+  .score-why { width: min(720px, 100vw); max-width: 100vw; max-height: 86vh; margin: auto auto 0; padding: 16px; border: none; border-radius: 18px 18px 0 0; background: var(--surface); color: var(--ink); }
+  .score-why::backdrop { background: rgba(10, 12, 13, .55); }
+  .score-why > .hint { margin: 0 0 12px; font-size: 13px; color: var(--ink-2); }
+  .score-why .button, body.immersive .score-why .button { background: var(--ground); color: var(--ink); border: 1px solid var(--rule); box-shadow: none; }
+  .score-why-body { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; overflow-y: auto; max-height: calc(86vh - 140px); }
+  .why-photo { border: 1px solid var(--rule); border-radius: 12px; padding: 10px; background: var(--ground); }
+  .why-photo-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .why-photo-head img { width: 56px; height: 42px; object-fit: cover; border-radius: 6px; }
+  .why-row { display: grid; grid-template-columns: 64px 1fr 66px; align-items: center; gap: 6px; font-size: 12.5px; margin: 5px 0; }
+  .why-bar { height: 6px; border-radius: 6px; background: var(--sunken); position: relative; overflow: hidden; }
+  .why-bar span { position: absolute; inset: 0 auto 0 0; border-radius: 6px; background: var(--graphite); }
+  .why-bar span.top { background: #E0A040; }
+  .why-level { text-align: right; color: var(--ink-2); font-size: 12px; }
+  .why-level.top { color: #8F560A; font-weight: 600; }
+  .tag.strong { background: rgba(255, 201, 120, .92); color: #3b2a0c; border-color: transparent; font-weight: 700; }
+  /* 격자 판은 밝은 바탕이라, 어두운 고르기 화면의 유리 버튼 색을 쓰지 않는다 */
+  .film-grid .button, body.immersive .film-grid .button { background: var(--ground); color: var(--ink); border: 1px solid var(--rule); box-shadow: none; }
+  .film-grid .hint, body.immersive .film-grid .hint { color: var(--ink-2); }
 
   /* 비슷한 컷 묶음 */
   .burst { width: 100%; height: 100%; display: grid; grid-template-rows: auto 1fr; gap: 12px; }
@@ -533,6 +580,8 @@
     #act-zoom, #act-faces { display: none; }
   }
   html.touch #act-zoom, html.touch #act-faces { display: none; } /* 손가락 기기인데 pointer: coarse를 알리지 않는 브라우저 */
+  /* 마우스를 쓰는 좁은 창(PC 브라우저를 줄인 경우)도 버튼 다섯 개가 들어가지 않아 결정 글자가 세로로 꺾였다(v38까지). 확대는 두 번 클릭·Space로 된다 */
+  @media (max-width: 520px) { #act-zoom, #act-faces { display: none; } }
   /* 버튼이 네 개 이상인 줄(비교 화면)에서는 되돌리기 글자를 빼서 결정 버튼이 두 줄로 꺾이지 않게 */
   .controls:has(.decide ~ .decide ~ .decide) .icon-only.undo { width: 46px; padding: 0; }
   .controls:has(.decide ~ .decide ~ .decide) .undo .undo-label { display: none; }
@@ -589,6 +638,11 @@
   .support h3 { margin: 18px 0 4px; padding-top: 16px; border-top: 1px solid var(--rule); font-size: 16px; }
   .support .hint { margin: 0 0 12px; }
   .support .support-note { margin: 12px 0 0; font-size: 13px; }
+  /* 후원 카드: 구분선 아래, 점선 테두리의 작은 카드 (정식 오픈 뒤에만 보임) */
+  .support-coffee { margin-top: 0; border-style: dashed; background: transparent; position: relative; }
+  .support + .support-coffee { margin-top: 44px; }
+  .support + .support-coffee::before { content: ''; position: absolute; left: 16px; right: 16px; top: -23px; border-top: 1px solid var(--rule); }
+  .support-coffee .hint { margin: 0 0 10px; }
   a.button { text-decoration: none; }
   .export-merge summary { display: flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; list-style: none; } /* 손가락으로 누를 만한 높이 */
   .export-merge summary::-webkit-details-marker { display: none; }
@@ -668,6 +722,8 @@
     .controls kbd, .compare .choose-key { display: none; }
     .filmstrip { min-height: 54px; padding: 6px 12px; }
     .filmstrip button { width: 58px; height: 40px; }
+    .film-nav, .film-expand { height: 40px; }
+    .film-nav { width: 30px; }
     .burst-head .hint { display: none; }
     /* 작은 화면에서도 묶음의 사진이 스크롤 없이 다 보이게 칸의 최소 높이를 낮춘다 (180px이면 360px 폭 휴대폰에서 두 번째 사진이 잘린다) */
     .burst-grid { padding: 8px; gap: 8px; grid-auto-rows: max(120px, calc((100% - (var(--rows, 2) - 1) * 8px) / var(--rows, 2))); }

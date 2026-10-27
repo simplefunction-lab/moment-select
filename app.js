@@ -81,6 +81,8 @@ const SHARE_BATCH_SIZE = (() => {
 })();
 // 내보내기 맨 아래 '응원' 구역 링크. 비어 있는 링크는 숨기고, 둘 다 비면 구역을 그리지 않는다
 const SUPPORT_URL = 'https://buymeacoffee.com/simplefunction';  // Buy Me a Coffee
+// 베타 테스트 동안은 후원 카드를 숨긴다 (2026-10-27 결정). 정식 오픈 때 true로 바꾸면 구분선 아래 따로 된 카드로 나온다
+const SHOW_COFFEE = false;
 const WAITLIST_URL = 'https://tally.so/r/vXG9N4?source=app'; // 아이폰 앱 출시 알림 (Tally). source는 폼의 숨은 필드
 const FEEDBACK_URL = 'https://tally.so/r/EqkO2l'; // 써 본 사람 의견 (Tally). 앱 판(v)과 기기 종류(device)만 숨은 필드로 붙인다
 // 의견 폼에 붙이는 기기 종류: 사람을 알아볼 수 없는 큰 분류만
@@ -119,7 +121,7 @@ const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시�
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
 const CACHE_VERSION = 'v5';             // 분석 방식이 바뀌면 올린다 (v5: 같은 사람 알아보기, 미적 점수)
-const APP_VERSION = 'v38';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
+const APP_VERSION = 'v39';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
 const DECODE_AHEAD = isTouchDevice ? 1 : 2;  // 분석하는 동안 미리 풀어 둘 다음 사진 수 (휴대폰은 메모리 때문에 1장)
 const ETA_WARMUP_PHOTOS = 3;             // 이만큼 분석하기 전에는 남은 시간을 보여주지 않는다 (첫 장은 모델 준비로 느리다)
 const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
@@ -1367,6 +1369,7 @@ $('#skip-faces').onclick = () => {
   state.skipFaceAnalysis = true;
   faceApi = null;
   $('#skip-faces').disabled = true;
+  $('#skip-faces [data-i18n]').textContent = t('skipFacesDone');
   showToast(t('skipFacesToast'));
 };
 
@@ -2070,24 +2073,29 @@ $('#compare-toggle').onclick = () => { state.compareMode = !state.compareMode; r
 
 // 필름 띠에서 누른 사진(priorityIds)을 뺀 원래 순서로 큐를 만든다.
 // 띠는 이 순서로 고정해서, 썸네일을 눌러도 띠 전체가 다시 섞이지 않게 한다.
+// 사진 줄의 순서: 고른 사진을 앞으로 당기거나(priorityIds) 건너뛴 차례를 뒤로 미루기(skipped) 전의 원래 순서.
+// v38까지는 건너뛴 차례가 뒤로 가면서 줄의 순서가 바뀌었다. 첫 칸이 계속 바뀌었고, 모두 건너뛰면 누른 사진으로 가지 않고 같은 사진에 멈췄다
 function naturalQueue(buildQueue) {
   const savedPriorityIds = state.priorityIds;
+  const savedSkipped = state.skipped;
   state.priorityIds = [];
-  try { return buildQueue(); } finally { state.priorityIds = savedPriorityIds; }
+  state.skipped = { first: new Set(), distill: new Set(), rescue: new Set() };
+  try { return buildQueue(); } finally { state.priorityIds = savedPriorityIds; state.skipped = savedSkipped; }
 }
 
-const FILMSTRIP_VISIBLE = 16;
-let filmstripEntries = []; // 지금 그린 필름 띠 항목 (누른 항목 앞의 차례를 건너뛴 것으로 표시할 때 쓴다)
+const FILMSTRIP_MAX = 300; // 한 번에 그리는 칸 수 (지금 사진 앞 50칸부터). 격자로 펼치면 모두 보인다
+let filmstripEntries = []; // 지금 그린 사진 줄 항목 (원래 순서)
+let filmstripCurrent = -1; // 그중 지금 무대에 떠 있는 항목의 순번
 function renderFilmstrip(entries, currentIds = []) {
   filmstripEntries = entries;
-  // entries: [{ids, photo, count}] 원래 볼 순서. currentIds: 지금 무대에 떠 있는 사진
+  // entries: [{key, ids, photo, count}] 원래 볼 순서. currentIds: 지금 무대에 떠 있는 사진
   const filmstrip = $('#filmstrip');
   const isCurrent = (entry) => entry.ids.some((id) => currentIds.includes(id));
   const currentIndex = entries.findIndex(isCurrent);
-  // 지금 보는 사진이 앞쪽 16장 밖이면 그 근처부터 보여준다
-  const start = currentIndex >= FILMSTRIP_VISIBLE ? currentIndex - 3 : 0;
-  const visible = entries.slice(start, start + FILMSTRIP_VISIBLE);
-  filmstrip.innerHTML = visible.map((entry, offset) => {
+  filmstripCurrent = currentIndex;
+  const start = Math.max(0, Math.min(currentIndex - 50, entries.length - FILMSTRIP_MAX));
+  const visible = entries.slice(start, start + FILMSTRIP_MAX);
+  filmstrip.innerHTML = (start ? `<span class="more num">${t('filmMore', start)}</span>` : '') + visible.map((entry, offset) => {
     const order = start + offset;
     const current = order === currentIndex;
     return `
@@ -2095,7 +2103,10 @@ function renderFilmstrip(entries, currentIds = []) {
       <img src="${entry.photo.thumbUrl}" alt="" loading="lazy">${entry.count > 1 ? `<span class="count num">${entry.count}</span>` : ''}
     </button>`;
   }).join('') + (entries.length > start + visible.length ? `<span class="more num">${t('filmMore', entries.length - start - visible.length)}</span>` : '');
-  // 지금 보는 썸네일이 띠 밖으로 밀려나 있으면 띠만 옆으로 넘긴다 (페이지는 움직이지 않게 scrollLeft로)
+  $('#film-prev').disabled = currentIndex <= 0;
+  $('#film-next').disabled = currentIndex >= entries.length - 1;
+  $('#filmbar').hidden = !entries.length;
+  // 지금 보는 썸네일이 줄 밖이면 줄만 옆으로 넘긴다 (페이지는 움직이지 않게 scrollLeft로)
   const currentButton = $('button.current', filmstrip);
   if (currentButton) {
     const left = currentButton.getBoundingClientRect().left - filmstrip.getBoundingClientRect().left + filmstrip.scrollLeft;
@@ -2104,17 +2115,41 @@ function renderFilmstrip(entries, currentIds = []) {
     }
   }
 }
+// 사진 줄의 order번째 사진으로 간다: 그 사진을 바로 보여 주고, 그 앞 차례는 지우지 않고 맨 뒤로 미룬다 (정한 뒤 처음으로 돌아가지 않는다)
+function goToFilmEntry(order) {
+  const entry = filmstripEntries[order];
+  if (!entry) return;
+  const skipped = state.skipped[state.view];
+  if (skipped) { skipped.clear(); for (const before of filmstripEntries.slice(0, order)) skipped.add(before.key); }
+  if (state.view === 'first' && entry.unit && !entry.unit.recommended) state.dividerSeen[state.currentReviewer] = true; // 구분선 너머로 건너뛰었으면 구분선은 본 것으로
+  state.priorityIds = [...entry.ids];
+  multiSet = null; // 나란히 보는 중이면 누른 사진부터 칸을 다시 채운다
+  render();
+}
 $('#filmstrip').onclick = (event) => {
   const button = event.target.closest('button[data-ids]');
   if (!button || button.classList.contains('current')) return;
-  // 누른 사진부터 이어서 본다. 그 앞 차례는 지우지 않고 맨 뒤로 미룬다 (정한 뒤 처음으로 돌아가지 않는다)
-  const order = Number(button.dataset.order);
-  const skipped = state.skipped[state.view];
-  if (skipped) for (const entry of filmstripEntries.slice(0, order)) skipped.add(entry.key);
-  if (state.view === 'first' && filmstripEntries[order]?.unit && !filmstripEntries[order].unit.recommended) state.dividerSeen[state.currentReviewer] = true; // 구분선 너머로 건너뛰었으면 구분선은 본 것으로
-  state.priorityIds = [];
-  multiSet = null; // 나란히 보는 중이면 누른 사진부터 칸을 다시 채운다
-  render();
+  goToFilmEntry(Number(button.dataset.order));
+};
+$('#film-prev').onclick = () => goToFilmEntry(filmstripCurrent - 1);
+$('#film-next').onclick = () => goToFilmEntry(filmstripCurrent + 1);
+// 펼치기: 이 단계의 사진을 모두 격자로 본다. 사진을 누르거나 접기·Esc로 닫으면 줄로 돌아온다
+$('#film-expand').onclick = () => {
+  const grid = $('#film-grid');
+  $('#film-grid-title').textContent = t('filmGridTitle', filmstripEntries.length);
+  $('#film-grid-body').innerHTML = filmstripEntries.map((entry, order) => `
+    <button type="button" class="${order === filmstripCurrent ? 'current' : ''}" data-order="${order}" aria-label="${t('filmNth', order + 1)}" ${order === filmstripCurrent ? 'aria-current="true"' : ''}>
+      <img src="${entry.photo.thumbUrl}" alt="" loading="lazy"><span class="order num">${order + 1}</span>${entry.count > 1 ? `<span class="count num">${entry.count}</span>` : ''}
+    </button>`).join('');
+  grid.showModal();
+  $('#film-grid-body button.current')?.scrollIntoView({ block: 'center' });
+};
+$('#film-collapse').onclick = () => $('#film-grid').close();
+$('#film-grid-body').onclick = (event) => {
+  const button = event.target.closest('button[data-order]');
+  if (!button) return;
+  $('#film-grid').close();
+  if (!button.classList.contains('current')) goToFilmEntry(Number(button.dataset.order));
 };
 
 function setNotice(html, alert = false) {
@@ -2304,6 +2339,15 @@ function renderDivider(stage, divider) {
 }
 
 // ---------- 낱장 ----------
+// 스와이프로 넘기면 결정을 반영하며 화면을 다시 그린다. 새 사진 상자가 그림을 비동기로 풀면 한 프레임 비어 깜빡였다 (v38까지, 녹화로 확인).
+// 썸네일은 그릴 때 바로 풀고(decoding="sync"), 큰 원본은 먼저 다 푼 뒤 바꾼다
+function swapToFullImage(photo, ...images) {
+  fullImageUrl(photo).then((url) => {
+    const decoded = new Image();
+    decoded.src = url;
+    decoded.decode().catch(() => {}).then(() => { for (const image of images) if (image.isConnected) image.src = url; });
+  });
+}
 function renderSingle(stage, photo, preloadIds, stageName) {
   stagePhotoId = photo.id;
   keepOnlyUrls([photo.id, ...preloadIds]);
@@ -2314,9 +2358,9 @@ function renderSingle(stage, photo, preloadIds, stageName) {
   const nextRatio = nextPhoto?.width && nextPhoto?.height ? nextPhoto.width / nextPhoto.height : 1.5;
   stage.innerHTML = `
     <div class="deck">
-      ${nextPhoto ? `<div class="frame peek" style="--ratio:${nextRatio}" aria-hidden="true"><div class="photo"><img src="${nextPhoto.thumbUrl}" alt=""></div></div>` : ''}
+      ${nextPhoto ? `<div class="frame peek" style="--ratio:${nextRatio}" aria-hidden="true"><div class="photo"><img src="${nextPhoto.thumbUrl}" alt="" decoding="sync"></div></div>` : ''}
       <div class="frame current" style="--ratio:${ratio}">
-        <div class="photo"><img src="${photo.thumbUrl}" alt="${escapeHtml(photo.name)}"></div>
+        <div class="photo"><img src="${photo.thumbUrl}" alt="${escapeHtml(photo.name)}" decoding="sync"></div>
         ${mainFacesOf(photo).map((face) => `<div class="facebox ${face.eyesClosed ? 'closed' : ''}" style="left:${face.box.x * 100}%;top:${face.box.y * 100}%;width:${face.box.w * 100}%;height:${face.box.h * 100}%"></div>`).join('')}
         <div class="tags">${photoTagsHtml(photo, { showAdded: stageName === 'distill' })}<span class="tag path">${escapeHtml(photo.relPath)}</span></div>
       </div>
@@ -2334,7 +2378,7 @@ function renderSingle(stage, photo, preloadIds, stageName) {
   dropImage.src = photo.thumbUrl;
   frame.append(keepMark, dropMark);
   const image = $('.photo img', frame);
-  fullImageUrl(photo).then((url) => { if (image.isConnected) { image.src = url; dropImage.src = url; } });
+  swapToFullImage(photo, image, dropImage);
 
   const decide = (status) => {
     decidePhoto(photo, status, stageName);
@@ -2775,6 +2819,55 @@ function attachSwipe(frame, keepMark, dropMark, onDecide, peek = null, zoom = nu
 // ---------- 비슷한 컷 묶음 ----------
 let burstSelection = { key: null, selected: new Set() };
 
+// ---------- 묶음 점수 근거 (v39) ----------
+// 점수 재료는 폴더 안 순위라, 거의 같은 연사도 작은 측정 차이가 점수 20점 차이로 보일 수 있다 (미적 점수 원값 5.04와 5.48이 순위 0.29와 0.93).
+// 그래서 묶음 안에서 원값끼리 비교해, 차이가 작으면 '비슷함'이라고 보여 준다. 기준(same)은 그 값의 측정이 흔들리는 폭보다 조금 크게 잡았다
+const BURST_FACTORS = [
+  { label: 'whyLooks', value: (photo) => photo.analysis.aesthetic?.mean ?? null, same: (a, b) => Math.abs(a - b) < 0.3 },
+  { label: 'whySharp', value: (photo) => { const faces = mainFacesOf(photo); return faces.length ? Math.max(...faces.map((face) => face.sharpness)) : photo.analysis.focusSharpness; }, same: (a, b) => Math.abs(a - b) <= 0.15 * Math.max(a, b) },
+  { label: 'whyExposure', value: (photo) => photo.features?.exposure ?? null, same: (a, b) => Math.abs(a - b) < 0.1 },
+  { label: 'whyFraming', value: (photo) => (mainFacesOf(photo).length ? photo.features?.framing : null), same: (a, b) => Math.abs(a - b) < 0.1 },
+  { label: 'whyFace', value: (photo) => (mainFacesOf(photo).length && photo.features ? (photo.features.expression + photo.features.eyesOpen) / 2 : null), same: (a, b) => Math.abs(a - b) < 0.1 },
+];
+// 묶음 사진마다 항목별 {level: 'top'|'same'|'low', width: 0~1}. 모두 비슷한 항목은 'same'
+function burstComparison(members) {
+  return BURST_FACTORS.map((factor) => {
+    const values = members.map((photo) => factor.value(photo));
+    const known = values.filter((value) => value !== null && Number.isFinite(value));
+    if (known.length < 2) return null;
+    const max = Math.max(...known), min = Math.min(...known);
+    const allSame = factor.same(max, min);
+    return {
+      label: factor.label,
+      rows: values.map((value) => (value === null || !Number.isFinite(value) ? null : {
+        level: allSame ? 'same' : factor.same(value, max) ? 'top' : 'low',
+        width: allSame ? 0.6 : factor.same(value, max) ? 1 : 0.15 + 0.7 * ((value - min) / (max - min || 1)),
+      })),
+      // 한 장만 앞서면 그 사진에 강점 꼬리표를 붙인다
+      leader: allSame ? -1 : values.filter((value) => value !== null && factor.same(value, max)).length === 1 ? values.indexOf(max) : -1,
+    };
+  }).filter(Boolean);
+}
+function burstStrengthTags(members) {
+  const tags = members.map(() => []);
+  for (const factor of burstComparison(members)) {
+    if (factor.leader >= 0 && (factor.label === 'whyLooks' || factor.label === 'whySharp')) tags[factor.leader].push(t(factor.label === 'whyLooks' ? 'whyBestLooks' : 'whyBestSharp'));
+  }
+  return tags;
+}
+function openScoreWhy(members) {
+  const comparison = burstComparison(members);
+  const levelText = { top: t('whyTop'), same: t('whySame'), low: t('whyLow') };
+  $('#score-why-title').textContent = t('whyTitle', members.length);
+  $('#score-why-body').innerHTML = members.map((photo, index) => `
+    <section class="why-photo">
+      <div class="why-photo-head"><img src="${photo.thumbUrl}" alt=""><span class="num">${index + 1}</span><strong class="num">${t('tagScore', photo.score)}</strong></div>
+      ${comparison.map((factor) => factor.rows[index] ? `<div class="why-row"><span>${t(factor.label)}</span><span class="why-bar"><span class="${factor.rows[index].level}" style="width:${Math.round(factor.rows[index].width * 100)}%"></span></span><span class="why-level ${factor.rows[index].level}">${levelText[factor.rows[index].level]}</span></div>` : '').join('')}
+    </section>`).join('');
+  $('#score-why').showModal();
+}
+$('#score-why-close').onclick = () => $('#score-why').close();
+
 function renderBurst(stage, unit) {
   keepOnlyUrls([]);
   const groupMembers = unit.ids.map((id) => state.photoById.get(id)).sort((left, right) => right.score - left.score);
@@ -2803,13 +2896,15 @@ function renderBurst(stage, unit) {
   // 좁은 화면(휴대폰 세로)에서는 사진을 크게 보이게 열 수를 줄인다
   const isNarrow = matchMedia('(max-width: 760px)').matches;
   const columns = isNarrow ? (members.length <= 3 ? 1 : 2) : members.length <= 4 ? 2 : members.length <= 9 ? 3 : 4;
+  const strengths = state.settings.useScore ? burstStrengthTags(groupMembers) : [];
   stage.innerHTML = `
     <div class="burst">
       <div class="burst-head">
         <h2>${t('burstTitle', groupMembers.length)}</h2>
         ${probeUnitKey === unit.key ? `<span class="tag">${t('tagProbe')}</span>` : ''}
-        <span class="hint">${t('burstHint')}${preselected ? t('burstHintScored') : ''}</span>
+        <span class="hint">${t('burstHint')}${preselected ? t('burstHintScored') : ''}${state.settings.useScore ? ` ${t('whyHintShort')}` : ''}</span>
         <span class="spacer"></span>
+        ${state.settings.useScore ? `<button class="button" id="burst-why">${t('whyButton')}</button>` : ''}
         <button class="button" id="burst-expand">${t('burstExpand')}</button>
       </div>
       <div class="burst-grid${shownKept.length ? ' with-kept' : ''}" style="--cols:${columns};--rows:${Math.min(3, Math.ceil(members.length / columns))}${shownKept.length ? `;grid-template-rows:repeat(${Math.ceil(groupMembers.length / columns)}, var(--shot-row)) auto repeat(${Math.ceil(shownKept.length / columns)}, var(--shot-row))` : ''}">
@@ -2818,7 +2913,7 @@ function renderBurst(stage, unit) {
           <button class="shot" data-id="${escapeHtml(photo.id)}" aria-pressed="${burstSelection.selected.has(photo.id)}" title="${t('burstShotTitle', escapeHtml(photo.relPath))}">
             <img src="${photo.thumbUrl}" alt="${escapeHtml(photo.name)}" loading="lazy">
             ${index < 9 ? `<span class="index num">${index + 1}</span>` : ''}
-            <span class="tags">${state.settings.useScore ? `<span class="tag num">${t('tagScore', photo.score)}</span>` : ''}${hasClosedEyes(photo) ? `<span class="tag flag"><i class="ph ph-eye-closed"></i> ${t('tagEyesShort')}</span>` : ''}${statusOf(photo.id) ? `<span class="tag">${t(statusOf(photo.id) === 'keep' ? 'tagAlreadyKept' : 'tagAlreadyDropped')}</span>` : ''}</span>
+            <span class="tags">${state.settings.useScore ? `<span class="tag num">${t('tagScore', photo.score)}</span>` : ''}${(strengths[index] ?? []).map((text) => `<span class="tag strong">${text}</span>`).join('')}${hasClosedEyes(photo) ? `<span class="tag flag"><i class="ph ph-eye-closed"></i> ${t('tagEyesShort')}</span>` : ''}${statusOf(photo.id) ? `<span class="tag">${t(statusOf(photo.id) === 'keep' ? 'tagAlreadyKept' : 'tagAlreadyDropped')}</span>` : ''}</span>
           </button>`).join('')}
       </div>
     </div>`;
@@ -2840,6 +2935,7 @@ function renderBurst(stage, unit) {
     shot.ondblclick = (event) => { event.preventDefault(); openViewer(state.photoById.get(shot.dataset.id)); };
   }
   $('#burst-expand').onclick = () => { state.expandedGroups.add(unit.key); buildUnits(); saveProjectSoon(); render(); };
+  if ($('#burst-why')) $('#burst-why').onclick = () => openScoreWhy(groupMembers);
   const confirm = async (askedRest = null) => {
     if (askedRest !== 'drop' && unitSelectedCount() === 0) { showToast(t('burstPickFirst', groupMembers.length), [], 3500); return; }
     // 묶음에서 고른 사진이 있고, 고르지 않은 묶음 사진(아직 안 정했거나 남겨 둔 사진)이 있으면 그 사진들을 어떻게 할지 정한다 (매번 묻거나 기억한 답).
@@ -3556,8 +3652,6 @@ async function undoOrganize() {
   render();
 }
 
-let supportHidden = false;   // '응원' 구역을 숨겼는지 (기기에만 기억)
-dbGet('supportHidden').then((hidden) => { supportHidden = Boolean(hidden); });
 
 function selectionIds(basis) {
   if (basis === 'a' || basis === 'b') return keepIds(basis);
@@ -3720,16 +3814,19 @@ function organizeSectionHtml(ids) {
 }
 // 내보내기 맨 아래 '응원' 구역: 후원 링크와 아이폰 앱 출시 알림. 사용자가 누를 때만 새 탭으로 열고 referrer도 보내지 않는다
 function supportSectionHtml() {
-  if (supportHidden || (!SUPPORT_URL && !WAITLIST_URL && !FEEDBACK_URL)) return '';
+  // v39부터 숨기기 버튼이 없다. 예전에 숨긴 기록(supportHidden)도 보지 않는다
+  const coffee = SHOW_COFFEE && SUPPORT_URL;
+  if (!coffee && !WAITLIST_URL && !FEEDBACK_URL) return '';
   const link = (url, label) => `<a class="button" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+  // 위 카드: 아이폰 앱 출시 알림과 의견. 후원은 가장 낮은 순위라 구분선 아래 작은 카드로 따로 둔다
   return `
-    <section class="support">
-      <div class="support-head"><h2>${t('supportTitle')}</h2><button class="button" id="support-hide" type="button">${t('supportHide')}</button></div>
-      ${SUPPORT_URL ? `<p class="hint">${t('supportBody')}</p><div class="row">${link(SUPPORT_URL, `☕ ${t('supportCoffee')}`)}</div>` : ''}
+    ${WAITLIST_URL || FEEDBACK_URL ? `<section class="support">
+      <div class="support-head"><h2>${t('supportTitle')}</h2></div>
       ${WAITLIST_URL ? `<h3>${t('supportAppTitle')}</h3><p class="hint">${t('supportAppBody')}</p><div class="row">${link(WAITLIST_URL, t('supportNotify'))}</div>` : ''}
       ${FEEDBACK_URL ? `<h3>${t('supportFeedbackTitle')}</h3><p class="hint">${t('supportFeedbackBody')}</p><div class="row">${link(feedbackUrl(), t('supportFeedback'))}</div>` : ''}
       <p class="hint support-note">${t('supportNote')}</p>
-    </section>`;
+    </section>` : ''}
+    ${coffee ? `<section class="support support-coffee"><p class="hint">${t('supportBody')}</p><div class="row">${link(SUPPORT_URL, `☕ ${t('supportCoffee')}`)}</div></section>` : ''}`;
 }
 
 function renderExportView() {
@@ -3810,7 +3907,6 @@ function renderExportView() {
     </details>
     ${supportSectionHtml()}`;
 
-  if ($('#support-hide')) $('#support-hide').onclick = () => { supportHidden = true; dbSet('supportHidden', true); render(); };
   if ($('#organize-run')) $('#organize-run').onclick = () => organizeFolder(ids);
   if ($('#organize-undo')) $('#organize-undo').onclick = undoOrganize;
   if ($('#basis-options')) { markCheckedLabels($('#basis-options')); $('#basis-options').onchange = (event) => { exportBasis = event.target.value; render(); }; }
