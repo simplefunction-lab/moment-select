@@ -157,7 +157,10 @@
   .target-choice input { margin-top: 3px; accent-color: var(--marker); }
   .target-choice b { display: block; font-size: 14px; }
   .target-choice small { display: block; font-size: 12px; color: var(--ink-2); margin-top: 2px; line-height: 1.35; }
-  .field.target-unlimited .inline { opacity: .45; }
+  /* 제한 없이(v42): 숫자 칸과 안내 대신 '제한 없음'. 흐린 숫자가 남으면 어느 설정이 적용되는지 헷갈린다(테스터 의견) */
+  .target-none { display: none; align-items: center; height: 40px; padding: 0 14px; border-radius: 12px; background: var(--marker-soft); color: var(--marker-press); font-weight: 700; }
+  .field.target-unlimited .stepper, .field.target-unlimited #target-hint { display: none; }
+  .field.target-unlimited .target-none { display: inline-flex; }
   /* 분석 화면: 접힌 '고르는 법 · 찾은 것' 줄과 분석한 사진 격자 (v39) */
   .analyze-fold { display: flex; justify-content: space-between; align-items: center; gap: 10px; width: 100%; max-width: 62ch; margin: 0 0 10px; padding: 11px 14px; border: 1px solid var(--rule); border-radius: 12px; background: var(--surface); color: var(--ink); font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
   .analyze-fold-open { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; font-weight: 600; }
