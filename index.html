@@ -6,7 +6,11 @@
 <!-- 외부로 나가는 연결을 브라우저 차원에서 막는다: 스크립트, 글꼴, 데이터 요청 모두 같은 출처만 허용 -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="theme-color" content="#F8F9F7">
+<!-- 홈 화면에서 연 앱 (v41): 주소창 없이, 위쪽 상태 표시줄은 밝은 바탕에 검은 글자, 홈 화면 이름은 짧게 -->
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Moment Select">
 <title>Moment Select</title>
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="icon" href="./icons/favicon-32.png" sizes="32x32" type="image/png">
