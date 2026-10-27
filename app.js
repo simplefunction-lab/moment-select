@@ -121,7 +121,7 @@ const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시�
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
 const CACHE_VERSION = 'v5';             // 분석 방식이 바뀌면 올린다 (v5: 같은 사람 알아보기, 미적 점수)
-const APP_VERSION = 'v40';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
+const APP_VERSION = 'v41';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
 const DECODE_AHEAD = isTouchDevice ? 1 : 2;  // 분석하는 동안 미리 풀어 둘 다음 사진 수 (휴대폰은 메모리 때문에 1장)
 const ETA_WARMUP_PHOTOS = 3;             // 이만큼 분석하기 전에는 남은 시간을 보여주지 않는다 (첫 장은 모델 준비로 느리다)
 const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
@@ -269,6 +269,13 @@ let saveTimer = null;
 // 잠금을 뺏긴 탭은 저장을 멈추고 알린다 (새로고침하면 다른 탭에서 고른 것까지 이어서 연다)
 let ownsProject = true;
 let releaseProjectLock = null;
+// 저장 데이터를 오래 보관해 달라고 요청한다 (v41). 사파리는 홈 화면에 추가하지 않은 사이트의 저장 데이터를
+// 7일 동안 안 쓰면 지울 수 있다(고른 결정과 분석 결과가 사라진다). 허락은 브라우저가 정한다. 결과는 진단에 적는다
+let storagePersisted = null; // null: 묻지 않음, true: 오래 보관, false: 브라우저가 거절
+async function requestPersistentStorage() {
+  if (!navigator.storage?.persist || storagePersisted) return;
+  try { storagePersisted = (await navigator.storage.persisted()) || await navigator.storage.persist(); } catch { storagePersisted = false; }
+}
 function claimProject(key) {
   releaseProjectLock?.();
   releaseProjectLock = null;
@@ -453,6 +460,7 @@ async function startWithEntries(folderName, imageEntries, source = { kind: 'hand
   state.projectKey = source.key;
   state.sourceKind = source.kind;
   claimProject(source.key);
+  requestPersistentStorage();
   // 예전 판은 사진 고르기를 화면 문구(folderName)로 저장했다. 폴더로 연 경우는 이름이 같은 다른 폴더 것일 수 있어서 찾지 않는다
   const savedProject = await dbGet(`project:${source.key}`) ?? (source.kind !== 'handle' && source.key !== folderName ? await dbGet(`project:${folderName}`) : undefined);
   dbSet('lastProject', { kind: source.kind, key: source.key, count: source.count, first: source.first }); // 폴더 핸들은 lastHandle에 따로 둔다
@@ -3332,6 +3340,7 @@ function diagnosticsText() {
   const lines = [];
   lines.push(faceEngine.backend === 'none' || !analyzedWithFaces.length ? t('diagNoFace') : t('diagBackend', { backend: faceEngine.backend === 'webgl' ? 'WebGL' : 'CPU', float32: faceEngine.float32 }));
   if (faceEngine.crossCheck) lines.push(t('diagCrossCheck', faceEngine.crossCheck));
+  if (storagePersisted !== null) lines.push(t(storagePersisted ? 'diagStorageKept' : 'diagStorageMaybe'));
   if (analyzedWithFaces.length) lines.push(t('diagFaces', { found: photosWithFaces, total: analyzedWithFaces.length }));
   if (faceEngine.darkRetries) lines.push(t('diagDark', { hits: faceEngine.darkRetryHits, tries: faceEngine.darkRetries }));
   if (faceEngine.wideRetries) lines.push(t('diagWide', { hits: faceEngine.wideRetryHits, tries: faceEngine.wideRetries }));
