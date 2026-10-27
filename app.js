@@ -83,7 +83,9 @@ const SHARE_BATCH_SIZE = (() => {
 const SUPPORT_URL = 'https://buymeacoffee.com/simplefunction';  // Buy Me a Coffee
 // 베타 테스트 동안은 후원 카드를 숨긴다 (2026-10-27 결정). 정식 오픈 때 true로 바꾸면 구분선 아래 따로 된 카드로 나온다
 const SHOW_COFFEE = false;
-const WAITLIST_URL = 'https://tally.so/r/vXG9N4?source=app'; // 아이폰 앱 출시 알림 (Tally). source는 폼의 숨은 필드
+const WAITLIST_URL = 'https://tally.so/r/vXG9N4?source=app'; // 앱 출시 알림 (Tally). source·platform은 폼의 숨은 필드
+// 출시 알림 링크: 누른 버튼의 기기(ios / android)를 platform 숨은 필드로 붙인다 (v41). 기기를 알아내지 않고 사용자가 고른 것만
+const waitlistUrl = (platform) => `${WAITLIST_URL}${WAITLIST_URL.includes('?') ? '&' : '?'}platform=${platform}`;
 const FEEDBACK_URL = 'https://tally.so/r/EqkO2l'; // 써 본 사람 의견 (Tally). 앱 판(v)과 기기 종류(device)만 숨은 필드로 붙인다
 // 의견 폼에 붙이는 기기 종류: 사람을 알아볼 수 없는 큰 분류만
 function deviceKind() {
@@ -3957,7 +3959,9 @@ function supportSectionHtml() {
   return `
     ${WAITLIST_URL || FEEDBACK_URL ? `<section class="support">
       <div class="support-head"><h2>${t('supportTitle')}</h2></div>
-      ${WAITLIST_URL ? `<h3>${t('supportAppTitle')}</h3><p class="hint">${t('supportAppBody')}</p><div class="row">${link(WAITLIST_URL, t('supportNotify'))}</div>` : ''}
+      ${WAITLIST_URL ? `<h3>${t('supportAppTitle')}</h3><p class="hint">${t('supportAppBody')}</p>
+        <ul class="support-benefits"><li>${t('supportAppBenefitAlbum')}</li><li>${t('supportAppBenefitKept')}</li><li>${t('supportAppBenefitBackground')}</li></ul>
+        <div class="row">${link(waitlistUrl('ios'), t('supportWantIos'))}${link(waitlistUrl('android'), t('supportWantAndroid'))}</div>` : ''}
       ${FEEDBACK_URL ? `<h3>${t('supportFeedbackTitle')}</h3><p class="hint">${t('supportFeedbackBody')}</p><div class="row">${link(feedbackUrl(), t('supportFeedback'))}</div>` : ''}
       <p class="hint support-note">${t('supportNote')}</p>
     </section>` : ''}
