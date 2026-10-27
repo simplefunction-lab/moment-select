@@ -121,7 +121,7 @@ const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시�
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
 const CACHE_VERSION = 'v5';             // 분석 방식이 바뀌면 올린다 (v5: 같은 사람 알아보기, 미적 점수)
-const APP_VERSION = 'v39';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
+const APP_VERSION = 'v40';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
 const DECODE_AHEAD = isTouchDevice ? 1 : 2;  // 분석하는 동안 미리 풀어 둘 다음 사진 수 (휴대폰은 메모리 때문에 1장)
 const ETA_WARMUP_PHOTOS = 3;             // 이만큼 분석하기 전에는 남은 시간을 보여주지 않는다 (첫 장은 모델 준비로 느리다)
 const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
@@ -2430,6 +2430,7 @@ function renderSingle(stage, photo, preloadIds, stageName) {
         <div class="photo"><img src="${photo.thumbUrl}" alt="${escapeHtml(photo.name)}" decoding="sync"></div>
         ${mainFacesOf(photo).map((face) => `<div class="facebox ${face.eyesClosed ? 'closed' : ''}" style="left:${face.box.x * 100}%;top:${face.box.y * 100}%;width:${face.box.w * 100}%;height:${face.box.h * 100}%"></div>`).join('')}
         <div class="tags">${photoTagsHtml(photo, { showAdded: stageName === 'distill' })}<span class="tag path">${escapeHtml(photo.relPath)}</span></div>
+        <button class="frame-expand" id="act-fullscreen" type="button" title="${t('fullscreenTitle')}" aria-label="${t('fullscreenTitle')}"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
       </div>
     </div>`;
   fitFramesWithoutContainerQueries();
@@ -2469,12 +2470,15 @@ function renderSingle(stage, photo, preloadIds, stageName) {
     <button class="button icon-only" id="act-faces" title="${t('facesTitle')}" aria-label="${t('facesTitle')}"><i class="ph ph-user-focus"></i></button>
     <button class="button decide keep" id="act-keep"><i class="ph ph-circle"></i>${keepWord}<kbd>→</kbd></button>`;
   const leave = (status) => leaveFrame(frame, status === 'keep' ? keepMark : dropMark, status, decide, { peek, nextId: nextPhoto?.id });
+  // 전체 화면: 같은 사진을 화면 가득 보고, 정하면 창을 닫고 여기 카드가 같은 길로 날아간다
+  const fullscreen = () => openFullscreen(photo, { keepWord, onDecide: leave });
+  $('#act-fullscreen').onclick = fullscreen;
   $('#act-drop').onclick = () => leave('drop');
   $('#act-keep').onclick = () => leave('keep');
   $('#act-undo').onclick = undoLast;
   $('#act-zoom').onclick = toggleZoom;
   $('#act-faces').onclick = () => frame.classList.toggle('show-faces');
-  currentKeys = { left: () => leave('drop'), right: () => leave('keep'), zoom: toggleZoom, faces: () => frame.classList.toggle('show-faces') };
+  currentKeys = { left: () => leave('drop'), right: () => leave('keep'), zoom: toggleZoom, faces: () => frame.classList.toggle('show-faces'), full: fullscreen };
 }
 
 // '한 장만 보기'를 고른 사진 위에 '비교로 보기' 줄을 둔다 (남긴 비슷한 컷과 나란히 보는 화면으로 돌아가기)
@@ -2791,7 +2795,7 @@ function attachSwipe(frame, keepMark, dropMark, onDecide, peek = null, zoom = nu
     keepMark.style.opacity = ''; dropMark.style.opacity = '';
   };
   frame.addEventListener('pointerdown', (event) => {
-    if (event.button !== 0 || frame.dataset.leaving) return;
+    if (event.button !== 0 || frame.dataset.leaving || event.target.closest('.frame-expand')) return;
     pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
     frame.setPointerCapture(event.pointerId);
     if (zoom && pointers.size === 2) {
@@ -3361,6 +3365,58 @@ function currentPhotoOnStage() {
 }
 
 // ---------- 크게 보기 ----------
+// ---------- 전체 화면에서 보면서 정하기 (v40) ----------
+// 테스터 피드백: 아이폰 사파리(보이는 높이 664px)에서 세로 사진이 194x262px(화면의 39%)로 작았다.
+// 카드는 남는 공간을 다 쓰지만 위쪽 줄·필터·묶음 줄·버튼·사진 줄이 자리를 차지한다. 그래서 화면 가득 보는 창을 둔다
+let fullscreenDecide = null; // 지금 전체 화면에 뜬 사진을 정하는 함수 (원래 화면의 leave)
+function openFullscreen(photo, { keepWord, onDecide }) {
+  const dialog = $('#fullscreen');
+  const image = $('#fullscreen-photo img');
+  image.style.transform = '';
+  image.alt = photo.name;
+  image.src = photo.thumbUrl;
+  $('#fullscreen-name').textContent = photo.name;
+  $('#fullscreen-keep-label').textContent = keepWord;
+  $('#fullscreen-drop-label').textContent = t('drop');
+  fullscreenDecide = onDecide;
+  dialog.showModal();
+  swapToFullImage(photo, image);
+}
+function decideFromFullscreen(status) {
+  const decide = fullscreenDecide;
+  fullscreenDecide = null;
+  $('#fullscreen').close();
+  decide?.(status); // 원래 카드가 펜슬 표시를 그리고 날아간다 (버튼으로 정할 때와 같다)
+}
+$('#fullscreen-close').onclick = () => { fullscreenDecide = null; $('#fullscreen').close(); };
+$('#fullscreen-keep').onclick = () => decideFromFullscreen('keep');
+$('#fullscreen-drop').onclick = () => decideFromFullscreen('drop');
+$('#fullscreen').addEventListener('close', () => { fullscreenDecide = null; });
+$('#fullscreen').addEventListener('keydown', (event) => {
+  if (event.key === 'ArrowRight') { event.preventDefault(); decideFromFullscreen('keep'); }
+  if (event.key === 'ArrowLeft') { event.preventDefault(); decideFromFullscreen('drop'); }
+});
+// 왼쪽·오른쪽으로 밀어 정하기 (화면 폭의 25% 넘게 밀면)
+{
+  const area = $('#fullscreen-photo');
+  let start = null;
+  area.addEventListener('pointerdown', (event) => { if (event.button === 0) { start = { x: event.clientX, y: event.clientY }; area.setPointerCapture(event.pointerId); } });
+  area.addEventListener('pointermove', (event) => {
+    if (!start) return;
+    const dx = event.clientX - start.x;
+    $('img', area).style.transform = `translateX(${dx}px) rotate(${dx / 40}deg)`;
+  });
+  const end = (event) => {
+    if (!start) return;
+    const dx = event.clientX - start.x;
+    start = null;
+    $('img', area).style.transform = '';
+    if (Math.abs(dx) > area.clientWidth * 0.25) decideFromFullscreen(dx > 0 ? 'keep' : 'drop');
+  };
+  area.addEventListener('pointerup', end);
+  area.addEventListener('pointercancel', () => { start = null; $('img', area).style.transform = ''; });
+}
+
 async function openViewer(photo) {
   const viewer = $('#viewer');
   const image = $('img', viewer) ?? viewer.insertAdjacentElement('afterbegin', document.createElement('img'));
@@ -3380,6 +3436,8 @@ document.addEventListener('keydown', (event) => {
   if ($('#viewer').open || document.querySelector('dialog[open]') || !PICK_VIEWS.includes(state.view)) return; // 묻는 창이 떠 있으면 뒤의 사진을 고르지 않는다
   if (event.key === 'z' || event.key === 'Z') { event.preventDefault(); undoLast(); return; }
   if (!currentKeys) return;
+  // Enter는 버튼에 초점이 있으면 그 버튼을 누르는 키라, 초점이 버튼·링크가 아닐 때만 전체 화면으로 쓴다
+  if (event.key === 'Enter' && currentKeys.full && !event.target.closest('button, a, [role=button], summary')) { event.preventDefault(); currentKeys.full(); return; }
   const actions = { ArrowLeft: currentKeys.left, ArrowRight: currentKeys.right, ArrowDown: currentKeys.down, ' ': currentKeys.zoom, f: currentKeys.faces, F: currentKeys.faces, '[': currentKeys.prev, ']': currentKeys.next };
   if (actions[event.key]) { event.preventDefault(); actions[event.key](); return; }
   if (/^[1-9]$/.test(event.key)) currentKeys.number?.(Number(event.key));

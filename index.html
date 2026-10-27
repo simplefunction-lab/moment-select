@@ -253,6 +253,13 @@
     <button class="button primary" id="together-keep"><span data-i18n="togetherKeep">Both keep</span></button>
   </div>
 </dialog>
+<!-- 전체 화면에서 보면서 정하기 (v40, 테스터 피드백): 한 장씩 보는 화면의 사진 카드 오른쪽 위 버튼으로 연다.
+     빼기·남기기는 원래 화면의 같은 결정 경로를 쓴다(창을 닫고 카드가 날아간다). 왼쪽·오른쪽으로 밀어도 된다 -->
+<dialog class="fullscreen" id="fullscreen" aria-labelledby="fullscreen-name">
+  <div class="fullscreen-top"><span class="fullscreen-name" id="fullscreen-name"></span><button class="button" id="fullscreen-close" type="button"><i class="ph ph-x"></i><span data-i18n="viewerClose">Close</span></button></div>
+  <div class="fullscreen-photo" id="fullscreen-photo"><img alt=""></div>
+  <div class="fullscreen-actions"><button class="button" id="fullscreen-drop" type="button"><i class="ph ph-x"></i><span id="fullscreen-drop-label"></span></button><button class="button primary" id="fullscreen-keep" type="button"><i class="ph ph-circle"></i><span id="fullscreen-keep-label"></span></button></div>
+</dialog>
 <dialog id="viewer"><button class="button close" id="viewer-close"><i class="ph ph-x"></i><span data-i18n="viewerClose">Close</span></button></dialog>
 <div class="toast hidden" id="toast" role="status"></div>
 <!-- 목표 장수를 맞췄을 때 축하 표시 -->
