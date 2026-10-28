@@ -123,7 +123,7 @@ const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시�
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
 const CACHE_VERSION = 'v5';             // 분석 방식이 바뀌면 올린다 (v5: 같은 사람 알아보기, 미적 점수)
-const APP_VERSION = 'v42';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
+const APP_VERSION = 'v43';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
 const DECODE_AHEAD = isTouchDevice ? 1 : 2;  // 분석하는 동안 미리 풀어 둘 다음 사진 수 (휴대폰은 메모리 때문에 1장)
 const ETA_WARMUP_PHOTOS = 3;             // 이만큼 분석하기 전에는 남은 시간을 보여주지 않는다 (첫 장은 모델 준비로 느리다)
 const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
@@ -2373,7 +2373,7 @@ function setAmbient(url) {
 }
 
 // ---------- 목표 장수를 딱 맞췄을 때 축하 ----------
-// 그리스 펜슬 빨강과 인화지 색만 쓴다. 움직임 줄이기 설정이면 건너뛴다
+// 강조 빨강과 인화지 색만 쓴다. 움직임 줄이기 설정이면 건너뛴다
 let confettiShooter = null;
 let lastCelebratedAt = 0;
 function celebrate() {
@@ -2699,10 +2699,10 @@ function renderExpanded(stage, unit, queue) {
   currentKeys = { ...currentKeys, prev: () => browse(-1), next: () => browse(1) };
 }
 
-// 결정하면 그리스 펜슬 표시를 그린 뒤 사진을 옆으로 날려 보낸다. 뒤에 있던 다음 사진은 스프링으로 앞으로 나온다
+// 결정하면 남김 빛이나 흑백 표시를 켠 뒤 사진을 옆으로 날려 보낸다. 뒤에 있던 다음 사진은 스프링으로 앞으로 나온다
 // fromX: 손가락으로 끌던 위치 (버튼과 키보드는 0)
 let promotedPhotoId = null; // 뒤에서 앞으로 나온 사진 (다음 그리기에서 등장 애니메이션을 건너뛴다)
-const SWIPE_LEAVE_MS = 320; // 결정을 반영하기까지 (펜슬 표시를 그리고 사진이 나가는 시간). 하루 수백 번 하는 동작이라 짧게
+const SWIPE_LEAVE_MS = 320; // 결정을 반영하기까지 (결정 표시를 켜고 사진이 나가는 시간). 하루 수백 번 하는 동작이라 짧게
 // 사진이 날아가는 동안 아직 반영하지 않은 결정. 되돌리기나 창 닫기가 그 사이에 오면 먼저 반영한다
 let pendingDecision = null;
 function flushPendingDecision() {
@@ -3397,7 +3397,7 @@ function decideFromFullscreen(status) {
   const decide = fullscreenDecide;
   fullscreenDecide = null;
   $('#fullscreen').close();
-  decide?.(status); // 원래 카드가 펜슬 표시를 그리고 날아간다 (버튼으로 정할 때와 같다)
+  decide?.(status); // 원래 카드가 결정 표시를 켜고 날아간다 (버튼으로 정할 때와 같다)
 }
 $('#fullscreen-close').onclick = () => { fullscreenDecide = null; $('#fullscreen').close(); };
 $('#fullscreen-keep').onclick = () => decideFromFullscreen('keep');
