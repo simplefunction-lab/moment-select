@@ -635,7 +635,7 @@ const TRIAL_PHOTOS = [
   { src: 'samples/trial-1.jpg', score: 90 },
   { src: 'samples/trial-2.jpg', score: 88 },
   { src: 'samples/trial-3.jpg', score: 85, similar: 2 },
-  { src: 'samples/trial-4.jpg', score: 35 },
+  { src: 'samples/trial-4.jpg', score: 51 },
 ];
 const TRIAL_SWIPE_PX = 70; // 이만큼 끌면 결정 (고르기 화면보다 작은 카드라 짧게)
 const trial = { index: 0, marks: [] }; // 견본 사진에 한 표시. 실제 사진 결정(state.reviewers)과 섞이지 않는다
