@@ -623,8 +623,91 @@ let pickNoteKey = 'pickNoteDefault'; // 시작 화면 안내 문구 (환경에 �
     $('#drive-note').classList.add('hidden');
   } else if (!canPickFolder) {
     pickNoteKey = 'pickNoteNoFolder';
+  } else {
+    $('#downloads-note').classList.remove('hidden'); // 데스크톱 크롬·엣지: 다운로드 폴더 자체는 폴더 창이 막는다
   }
 })();
+
+// ---------- 시작 화면 '먼저 해 보기' (v43) ----------
+// 견본 사진 4장(samples/, CC0)을 고르기 화면과 같은 표시로 넘겨 본다: 남김은 따뜻한 빛, 뺌은 흑백.
+// 점수는 v42 앱이 여행 설정으로 매긴 실제 값이다 (samples/CREDITS.txt). 결정은 저장하지 않는다
+const TRIAL_PHOTOS = [
+  { src: 'samples/trial-1.jpg', score: 90 },
+  { src: 'samples/trial-2.jpg', score: 88 },
+  { src: 'samples/trial-3.jpg', score: 85, similar: 2 },
+  { src: 'samples/trial-4.jpg', score: 35 },
+];
+const TRIAL_SWIPE_PX = 70; // 이만큼 끌면 결정 (고르기 화면보다 작은 카드라 짧게)
+const trial = { index: 0, marks: [] }; // 견본 사진에 한 표시. 실제 사진 결정(state.reviewers)과 섞이지 않는다
+function renderTrial() {
+  const stage = $('#trial-stage'), done = trial.index >= TRIAL_PHOTOS.length;
+  const keep = trial.marks.filter((status) => status === 'keep').length;
+  const drop = trial.marks.length - keep;
+  $('#trial-count').textContent = t('trialCount', { keep, drop, total: TRIAL_PHOTOS.length });
+  $('#trial').style.setProperty('--trial-bg', done ? 'none' : `url("${TRIAL_PHOTOS[trial.index].src}")`); // 고르기 화면처럼 지금 사진을 흐려 깐다
+  stage.innerHTML = done ? '' : [trial.index + 1, trial.index].filter((index) => index < TRIAL_PHOTOS.length).map((index) => {
+    const photo = TRIAL_PHOTOS[index];
+    const tags = [`<span class="tag num">${t('tagScore', photo.score)}</span>`, photo.similar ? `<span class="tag num">${t('trialSimilar', photo.similar)}</span>` : ''].join('');
+    return `<div class="trial-card${index === trial.index ? ' current' : ' peek'}" data-index="${index}"><img src="${photo.src}" alt="" draggable="false" decoding="async"><span class="trial-mark keep"></span><span class="tags">${tags}</span></div>`;
+  }).join('');
+  stage.classList.toggle('hidden', done);
+  $('#trial-help').classList.toggle('hidden', done);
+  $('#trial-actions').classList.toggle('hidden', done);
+  $('#trial-done').classList.toggle('hidden', !done);
+  if (done) $('#trial-done-title').textContent = t('trialDoneTitle', { keep, total: TRIAL_PHOTOS.length });
+  $('#trial-strip').innerHTML = TRIAL_PHOTOS.map((photo, index) =>
+    `<span class="trial-thumb ${trial.marks[index] ?? (index === trial.index ? 'current' : '')}"><img src="${photo.src}" alt="" draggable="false" decoding="async"></span>`).join('');
+}
+function decideTrial(status, fromX = 0) {
+  const card = $('#trial-stage .trial-card.current');
+  if (!card || card.dataset.leaving) return;
+  card.dataset.leaving = '1';
+  card.classList.add(status === 'keep' ? 'kept' : 'dropped');
+  const direction = status === 'keep' ? 1 : -1;
+  const finish = () => { trial.marks.push(status); trial.index++; renderTrial(); };
+  if (reducedMotion.matches) { finish(); return; }
+  card.style.transition = 'transform .26s cubic-bezier(.4, 0, 1, 1) .12s, opacity .26s .12s';
+  card.style.transform = `translateX(${fromX}px)`;
+  requestAnimationFrame(() => { card.style.transform = `translateX(${direction * 130}%) rotate(${direction * 12}deg)`; card.style.opacity = '0'; });
+  setTimeout(finish, 400);
+}
+$('#trial-keep').onclick = () => decideTrial('keep');
+$('#trial-drop').onclick = () => decideTrial('drop');
+$('#trial-again').onclick = () => { trial.index = 0; trial.marks = []; renderTrial(); $('#trial-stage').focus(); };
+$('#trial-stage').addEventListener('keydown', (event) => {
+  if (event.key === 'ArrowRight') { event.preventDefault(); decideTrial('keep'); }
+  if (event.key === 'ArrowLeft') { event.preventDefault(); decideTrial('drop'); }
+});
+// 끌기: 손을 따라 기울고, 오른쪽이면 남김 빛이 차오르고 왼쪽이면 흑백이 된다
+let trialDrag = null;
+$('#trial-stage').addEventListener('pointerdown', (event) => {
+  const card = $('#trial-stage .trial-card.current');
+  if (!card || card.dataset.leaving || event.button > 0) return;
+  trialDrag = { card, startX: event.clientX, pointerId: event.pointerId, dx: 0 };
+  card.setPointerCapture(event.pointerId);
+  card.style.transition = 'none';
+});
+$('#trial-stage').addEventListener('pointermove', (event) => {
+  if (!trialDrag || event.pointerId !== trialDrag.pointerId) return;
+  const dx = event.clientX - trialDrag.startX;
+  trialDrag.dx = dx;
+  trialDrag.card.style.transform = `translateX(${dx}px) rotate(${dx / 30}deg)`;
+  trialDrag.card.style.setProperty('--keep-amount', Math.max(0, Math.min(1, dx / TRIAL_SWIPE_PX)));
+  trialDrag.card.style.setProperty('--drop-amount', Math.max(0, Math.min(1, -dx / TRIAL_SWIPE_PX)));
+});
+const endTrialDrag = (event) => {
+  if (!trialDrag || event.pointerId !== trialDrag.pointerId) return;
+  const { card, dx } = trialDrag;
+  trialDrag = null;
+  if (Math.abs(dx) >= TRIAL_SWIPE_PX) { decideTrial(dx > 0 ? 'keep' : 'drop', dx); return; }
+  card.style.transition = '';
+  card.style.transform = '';
+  card.style.removeProperty('--keep-amount');
+  card.style.removeProperty('--drop-amount');
+};
+$('#trial-stage').addEventListener('pointerup', endTrialDrag);
+$('#trial-stage').addEventListener('pointercancel', endTrialDrag);
+renderTrial();
 
 let resumeText = null; // 이어하기 안내 문구를 만드는 함수 (언어를 바꿀 때 다시 쓰려고 기억)
 // 지난번 설정을 시작 화면에 되살린다. 사진 종류가 같아야 결정을 이어 쓰므로, 같은 사진을 다시 고르면 그대로 이어진다
@@ -4215,6 +4298,7 @@ async function shareNextBatch(ids) {
    언어 선택 (한국어, 영어)
    ===================================================================== */
 function applyLanguage() {
+  renderTrial();
   applyStaticText();
   for (const button of document.querySelectorAll('.lang-switch button')) button.setAttribute('aria-pressed', String(button.dataset.lang === getLanguage()));
   $('#pick-note').textContent = t(pickNoteKey);

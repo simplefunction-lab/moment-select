@@ -50,11 +50,32 @@
   <section class="view" id="view-setup">
     <div class="setup">
       <!-- 첫 화면: 제목, 개인정보 한 줄, 사진 종류와 장수, 사진 고르기 버튼까지 스크롤 없이 보이게 -->
+      <!-- 넓은 화면: 왼쪽 제목·설정, 오른쪽 '먼저 해 보기'. 좁은 화면: 제목 → 먼저 해 보기 → 설정 (v43) -->
+      <div class="setup-grid">
       <div class="hero">
         <h1 id="setup-title" data-i18n="setupTitle">Pick the photos to keep</h1>
         <p class="lede" data-i18n="setupIntro">Swipe through hundreds of shots and keep the best. Everything runs on your device.</p>
         <p class="privacy"><i class="ph ph-lock-simple" aria-hidden="true"></i><span data-i18n="privacyLine">Your photos never leave this device. Nothing is uploaded.</span></p>
       </div>
+
+      <!-- 먼저 해 보기 (v43): 견본 사진 4장으로 고르기 화면과 같은 남김 빛·흑백 표시를 미리 해 본다. 내 사진은 쓰지 않는다 -->
+      <aside class="trial" id="trial" aria-labelledby="trial-title">
+        <div class="trial-head"><b id="trial-title" data-i18n="trialTitle">Try it first</b><span class="trial-count num" id="trial-count"></span></div>
+        <div class="trial-stage" id="trial-stage" tabindex="0" aria-describedby="trial-help"></div>
+        <p class="trial-help" id="trial-help" data-i18n="trialHelp">Swipe right to keep, left to drop.</p>
+        <div class="trial-actions" id="trial-actions">
+          <button type="button" class="button trial-drop" id="trial-drop"><i class="ph ph-x" aria-hidden="true"></i><span data-i18n="drop">Drop</span></button>
+          <button type="button" class="button primary trial-keep" id="trial-keep"><i class="ph ph-circle" aria-hidden="true"></i><span data-i18n="keep">Keep</span></button>
+        </div>
+        <div class="trial-done hidden" id="trial-done" role="status">
+          <p class="trial-done-title" id="trial-done-title"></p>
+          <p class="trial-done-body" data-i18n="trialDoneBody">Your own photos work the same way, best shots first.</p>
+          <button type="button" class="button" id="trial-again" data-i18n="trialAgain">Try again</button>
+        </div>
+        <div class="trial-strip" id="trial-strip" aria-hidden="true"></div>
+      </aside>
+
+      <div class="setup-form">
 
       <div class="resume hidden" id="resume">
         <i class="ph ph-clock-counter-clockwise"></i>
@@ -100,7 +121,11 @@
         <button class="button" id="pick-photos"><i class="ph ph-images"></i><span data-i18n="pickPhotos">Choose photos</span></button>
       </div>
       <p class="hint start-note" id="pick-note">Reads JPG, PNG and WEBP files, including subfolders. RAW files are skipped.</p>
+      <!-- 크롬은 다운로드·문서·바탕화면·홈 폴더 자체를 폴더 창에서 열어 주지 않는다 (그 안의 폴더는 된다). 폴더를 고를 수 있는 브라우저에서만 보인다 (v43, 테스터 의견) -->
+      <p class="hint hidden" id="downloads-note" data-i18n="downloadsNote">Chrome won't open your Downloads, Documents or Desktop folder itself. Pick a folder inside it, or use Choose photos.</p>
       <p class="hint" id="drive-note" data-i18n="driveNote">Using Google Drive? Install Google Drive for desktop, pick the folder there, and make it available offline first.</p>
+      </div>
+      </div>
 
       <!-- 처음 쓰는 사람은 몰라도 되는 설정은 접어 둔다 -->
       <details class="more-options">
