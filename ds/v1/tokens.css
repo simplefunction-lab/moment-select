@@ -1,0 +1,105 @@
+/* =====================================================================
+   simplefunction 디자인 시스템 v1 — 토큰
+   - 한 시스템, 제품마다 기준색 하나: 공통 토큰은 모든 제품이 같고, --accent 줄만 제품이 바꾼다
+   - 외부 요청 없음: 글꼴은 이 폴더의 파일만 쓴다 (fonts/, 둘 다 SIL OFL 1.1)
+   - 모눈종이 위의 함수선: 밝은 광물성 종이, 초록빛 검은 잉크, 단단한 잉크 그림자
+   - 이 파일은 복사해서 쓴다 (각 제품의 ds/v1/). 값을 바꾸면 판 번호를 올린다
+   정렬 규칙 (허용 오차 1px, 출시 게이트가 잰다)
+   A1. 짝 정렬: 아이콘·라디오 점·체크 표시는 옆 글자의 첫 줄 가운데에 맞춘다
+   A2. 이름표 ↔ 조작부: 조작부는 --control-h 높이, 이름표는 그 높이 안에서 세로 가운데
+   A3. 나란한 카드: 높이를 같게 하고 내용은 카드 안에서 세로 가운데. 설명은 같은 줄 수로 쓴다
+   A4. 가로 정렬: 한 구역의 왼쪽 끝은 이름표 열과 조작부 열 두 줄에만 맞춘다. 안내 글은 조작부 열에서 시작
+   T1. 줄바꿈: 한국어는 낱말 단위로 줄을 바꾼다 (word-break: keep-all; overflow-wrap: anywhere)
+   ===================================================================== */
+
+/* 글꼴: 제목은 Bricolage Grotesque(라틴), 본문·한글은 Simplefunction Text(Pretendard 1.3.9를 한글 2,350자+라틴으로 줄이고 이름을 바꾼 것) */
+@font-face { font-family: "Bricolage Grotesque"; src: url("./fonts/bricolage-grotesque.woff2") format("woff2-variations"); font-weight: 200 800; font-display: swap; }
+@font-face { font-family: "Simplefunction Text"; src: url("./fonts/simplefunction-text.woff2") format("woff2-variations"); font-weight: 45 920; font-display: swap; }
+
+/* A1 도우미: 부모 글자 한 줄 높이를 px로 고정해 물려준다. 아이콘·점 칸의 높이로 쓰면 첫 줄 가운데에 맞는다 */
+@property --sf-line { syntax: "<length>"; inherits: true; initial-value: 0px; }
+
+:root {
+  /* 1. 원재료 색 (직접 쓰지 않고 아래 역할 색으로만 쓴다) */
+  --sf-paper-50: #F6F8F7;
+  --sf-paper-100: #E8EDEA;   /* 종이 */
+  --sf-paper-150: #DFE5E2;   /* 눌린 칸 */
+  --sf-paper-200: #D5DDD9;   /* 모눈 선 */
+  --sf-paper-300: #C2CCC7;   /* 구분선 */
+  --sf-ink-900: #1D2622;     /* 잉크 */
+  --sf-ink-700: #4F5A55;     /* 보조 잉크 (종이 위 대비 6.0) */
+  --sf-night-900: #24282A;   /* 어두운 무대 */
+  --sf-cobalt-600: #2F45DE;  /* simplefunction 기준색: 함수선 */
+
+  /* 2. 역할 색 */
+  --bg: var(--sf-paper-100);
+  --surface: var(--sf-paper-50);
+  --sunken: var(--sf-paper-150);
+  --grid: var(--sf-paper-200);
+  --rule: var(--sf-paper-300);
+  --text: var(--sf-ink-900);
+  --text-2: var(--sf-ink-700);
+  --stage: var(--sf-night-900);
+  --focus: var(--sf-cobalt-600);
+  /* 제품이 바꾸는 줄: 기준색과 그 위 글자색 (대비 4.5 이상) */
+  --accent: var(--sf-cobalt-600);
+  --on-accent: #F3F5FF;
+
+  /* 3. 글자 */
+  --font-brand: "Bricolage Grotesque", "Simplefunction Text", system-ui, sans-serif;  /* 영어 중심 화면, 제목 */
+  --font-ui: "Simplefunction Text", system-ui, sans-serif;                            /* 한국어 화면, 앱 조작부 */
+  --text-xs: 12px;
+  --text-s: 14px;
+  --text-m: 16px;
+  --text-l: 18px;
+  --text-xl: 22px;
+  --text-2xl: 30px;
+  --text-3xl: clamp(36px, 6vw, 56px);
+  --text-display: clamp(52px, 13vw, 132px);
+  --weight-regular: 400;
+  --weight-strong: 600;
+  --weight-bold: 700;
+  --weight-heavy: 800;
+  --leading-tight: 1;
+  --leading: 1.55;
+
+  /* 4. 간격 (4px 단위) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  /* 5. 모서리 */
+  --radius-xs: 4px;    /* 초점 테두리, 작은 표시 */
+  --radius-s: 8px;     /* 썸네일, 작은 칸 */
+  --radius-m: 12px;    /* 입력칸, 사진 카드 */
+  --radius-l: 18px;    /* 버튼, 카드 */
+  --radius-xl: 24px;   /* 큰 판, 유리 조작부 */
+  --radius-pill: 999px;
+
+  /* 5-1. 조작부 높이: 칩, 숫자 칸, 작은 버튼은 모두 이 높이. 이름표는 이 높이 안에서 세로 가운데 */
+  --control-h: 40px;
+  --control-h-l: 54px;   /* 시작 버튼처럼 큰 버튼 */
+
+  /* 6. 그림자: 흐린 그림자 대신 단단한 잉크 그림자 (simplefunction의 표시) */
+  --shadow-card: 8px 8px 0 var(--text);
+  --shadow-button: 4px 4px 0 var(--text);
+  --shadow-button-hover: 5px 5px 0 var(--text);
+  --shadow-button-press: 1px 1px 0 var(--text);
+
+  /* 7. 움직임: 감속 곡선, 300ms 안쪽, transform과 opacity만 */
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+  --ease-draw: cubic-bezier(.6, 0, .2, 1);
+  --dur-fast: 120ms;
+  --dur: 200ms;
+  --dur-slow: 300ms;
+}
+
+/* 제품 기준색: 제품 페이지나 루트 사이트의 제품 칸에 data-product를 붙인다 */
+[data-product="moment-select"] { --accent: #C8261C; --on-accent: #FFFFFF; }
+[data-product="orot"] { --accent: #8B5E2E; --on-accent: #FFFFFF; }
+[data-product="groove-skater"] { --accent: #1E6B4C; --on-accent: #FFFFFF; }

@@ -123,7 +123,7 @@ const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시�
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
 const CACHE_VERSION = 'v5';             // 분석 방식이 바뀌면 올린다 (v5: 같은 사람 알아보기, 미적 점수)
-const APP_VERSION = 'v43';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
+const APP_VERSION = 'v44';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
 const DECODE_AHEAD = isTouchDevice ? 1 : 2;  // 분석하는 동안 미리 풀어 둘 다음 사진 수 (휴대폰은 메모리 때문에 1장)
 const ETA_WARMUP_PHOTOS = 3;             // 이만큼 분석하기 전에는 남은 시간을 보여주지 않는다 (첫 장은 모델 준비로 느리다)
 const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
@@ -591,8 +591,42 @@ $('#fallback-input').onchange = async (event) => {
 };
 
 // 휴대폰과 폴더 선택이 안 되는 브라우저: 사진 보관함이나 갤러리에서 여러 장 고르기
-$('#pick-photos').onclick = () => { if (!blockedWhileOrganizing()) $('#photos-input').click(); };
+// 사진 받기 (v44): 휴대폰 선택 창은 '추가'를 누른 뒤에도 사진을 준비하는 동안(480장에 약 1분) 아무 신호가 없고,
+// 아이클라우드에만 있는 사진이 한 장이라도 섞이면 파일 없이 'cancel'만 보낸다 (iOS 26.5 시뮬레이터에서 재현, 2026-10-28).
+// 그래서 휴대폰에서는 고르기 창을 여는 순간 '받는 중'을 보여 주고, cancel이 오면 이유와 할 일을 보여 준다.
+// 사용자가 직접 취소해도 같은 cancel이 와서 둘을 구별할 수 없다. 그래서 실패 카드에 '직접 취소했다면 닫기'를 둔다.
+// cancel을 보내지 않는 브라우저에서는 '받는 중'이 영영 남으니 카드를 쓰지 않는다
+const showsReceive = isTouchDevice && 'oncancel' in HTMLInputElement.prototype;
+let receiveState = null; // null | 'waiting' | 'failed'
+function renderReceive() {
+  const box = $('#receive'), button = $('#pick-photos');
+  box.classList.toggle('hidden', !receiveState);
+  box.classList.toggle('failed', receiveState === 'failed');
+  box.setAttribute('role', receiveState === 'failed' ? 'alert' : 'status');
+  button.classList.toggle('busy', receiveState === 'waiting');
+  button.disabled = receiveState === 'waiting';
+  if (receiveState === 'waiting') {
+    box.innerHTML = `<i class="ph ph-images" aria-hidden="true"></i><b>${t('receiveTitle')}</b><p>${t('receiveBody')}</p><span class="receive-bar" aria-hidden="true"></span>`;
+  } else if (receiveState === 'failed') {
+    box.innerHTML = `<i class="ph ph-images" aria-hidden="true"></i><b>${t('receiveFailTitle')}</b><button type="button" class="receive-close" id="receive-close" aria-label="${t('receiveClose')}"><i class="ph ph-x" aria-hidden="true"></i></button>
+      <p>${t('receiveFailBody')}</p><ol><li>${t('receiveFailStep1')}</li><li>${t('receiveFailStep2')}</li></ol><p class="receive-note">${t('receiveFailCancelled')}</p>`;
+    $('#receive-close').onclick = () => { receiveState = null; renderReceive(); $('#pick-photos').focus(); };
+  } else {
+    box.innerHTML = '';
+  }
+}
+$('#pick-photos').onclick = () => {
+  if (blockedWhileOrganizing()) return;
+  if (showsReceive) { receiveState = 'waiting'; renderReceive(); }
+  $('#photos-input').click();
+};
+$('#photos-input').addEventListener('cancel', () => {
+  if (receiveState !== 'waiting') return;
+  receiveState = 'failed';
+  renderReceive();
+});
 $('#photos-input').onchange = async (event) => {
+  if (receiveState) { receiveState = null; renderReceive(); }
   const pickedFiles = [...event.target.files];
   const imageFiles = pickedFiles.filter((file) => file.type.startsWith('image/') || SUPPORTED_IMAGE.test(file.name));
   event.target.value = '';
@@ -4299,6 +4333,7 @@ async function shareNextBatch(ids) {
    ===================================================================== */
 function applyLanguage() {
   renderTrial();
+  renderReceive();
   applyStaticText();
   for (const button of document.querySelectorAll('.lang-switch button')) button.setAttribute('aria-pressed', String(button.dataset.lang === getLanguage()));
   $('#pick-note').textContent = t(pickNoteKey);
