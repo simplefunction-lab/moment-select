@@ -2,14 +2,13 @@
    - Pretendard: 완성형 한글 2,350자와 라틴 문자만 남긴 가변 글꼴
    - 나눔펜: '남김', '뺌'과 'keep', 'drop' 글자만 남긴 손글씨 */
 @font-face { font-family: "Pretendard Variable"; src: url("./vendor/fonts/pretendard-subset.woff2") format("woff2-variations"); font-weight: 45 920; font-display: swap; }
-@font-face { font-family: "Nanum Pen Script"; src: url("./vendor/fonts/nanum-pen-marks.woff2") format("woff2"); font-display: block; unicode-range: U+AC00-D7A3; }
-@font-face { font-family: "Nanum Pen Script"; src: url("./vendor/fonts/nanum-pen-marks-latin.woff2") format("woff2"); font-display: block; unicode-range: U+0000-00FF; }
 
   /* =====================================================================
      디자인 토큰
      - 바탕은 사진가의 라이트 테이블처럼 밝은 광물성 회색
      - 사진을 보는 무대만 중립 어두운 회색 (색 판단을 흐리지 않게)
-     - 강조색은 밀착 인화지에 표시하던 그리스 펜슬 빨강 하나: '남김' 표시와 주요 버튼에만 쓴다
+     - 강조색은 빨강 하나(--marker): 주요 버튼, 고른 칸 테두리, 경고에만 쓴다
+     - 사진 결정 표시: 남김은 따뜻한 빛(--lit), 뺌은 흑백. 사진 위에 글자나 동그라미·엑스를 그리지 않는다 (v34부터)
      ===================================================================== */
   :root {
     --ground: #ECEEEB;       /* 앱 바탕 */
@@ -21,7 +20,7 @@
     --stage: #313537;        /* 사진 무대 */
     --stage-ink: #E8EBE9;    /* 무대 위 글자 */
     --stage-ink-2: #A9B0AD;
-    --marker: #C8261C;       /* 그리스 펜슬 빨강 */
+    --marker: #C8261C;       /* 강조 빨강 */
     --lit: #FFC978;          /* 남김 빛 (어두운 배경과 대비 11:1) */
     --lit-soft: rgba(255, 201, 120, .55);
     --graphite: #8A8F91;     /* 뺌 테두리 (어두운 배경과 대비 5:1) */
@@ -32,7 +31,6 @@
     --radius-s: 4px;
     --radius-m: 8px;
     --font-ui: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
-    --font-marker: "Nanum Pen Script", var(--font-ui);
     --ease-out: cubic-bezier(.16, 1, .3, 1);
   }
   * { box-sizing: border-box; }
