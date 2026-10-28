@@ -11,6 +11,11 @@ renders/
 *.heic
 *.png
 !icons/*.png
+# 시작 화면 '먼저 해 보기' 견본 4장만 예외 (CC0, 출처와 확인 방법은 samples/CREDITS.txt). 개인·시험 사진은 여전히 막는다
+!samples/trial-1.jpg
+!samples/trial-2.jpg
+!samples/trial-3.jpg
+!samples/trial-4.jpg
 
 # Claude Code local settings and hooks for this machine
 .claude/settings.local.json
