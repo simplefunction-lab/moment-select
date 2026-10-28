@@ -3,10 +3,6 @@
 face-api (@vladmandic/face-api 1.7.15) - MIT License - https://github.com/vladmandic/face-api
   얼굴 검출, 얼굴 랜드마크, 표정, 얼굴 인식(같은 사람 알아보기) 모델 포함
 exifr 7.1.3 - MIT License - https://github.com/MikeKovarik/exifr
-Pretendard 1.3.9 - SIL Open Font License 1.1 - https://github.com/orioncactus/pretendard
-  완성형 한글 2,350자와 라틴 문자만 남겨 서브셋. name 테이블에 두 번씩 들어 있던 레코드 19개를 하나만 남김(Firefox 경고 해결)
-Nanum Pen Script (@fontsource/nanum-pen-script 5.3.0) - SIL Open Font License 1.1 - https://fontsource.org/fonts/nanum-pen-script
-  '남김', '뺌'과 영문 keep, drop 글자만 남겨 서브셋
 Phosphor Icons (@phosphor-icons/web 2.1.2) - MIT License - https://github.com/phosphor-icons/web
   사용하는 아이콘 21개만 남겨 서브셋
 NIMA 미적 점수 모델 (idealo/image-quality-assessment, MobileNet aesthetic, weights_mobilenet_aesthetic_0.07.hdf5)
@@ -24,3 +20,6 @@ Open Props (open-props 1.7.23) - MIT License - Copyright (c) 2021 Adam Argyle - 
   easings.min.css(이징과 스프링 곡선 변수)만 그대로 복사
 canvas-confetti 1.9.4 - ISC License - Copyright (c) 2020, Kiril Vatev - https://github.com/catdad/canvas-confetti
   dist/confetti.module.mjs를 그대로 복사
+
+글꼴은 디자인 시스템으로 옮겼다 (v44): ds/v1/README.md
+  Bricolage Grotesque, Simplefunction Text(Pretendard 1.3.9를 줄이고 이름을 바꾼 것). 둘 다 SIL Open Font License 1.1, 전문은 ds/v1/fonts/
