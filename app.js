@@ -123,7 +123,7 @@ const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시�
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
 const CACHE_VERSION = 'v5';             // 분석 방식이 바뀌면 올린다 (v5: 같은 사람 알아보기, 미적 점수)
-const APP_VERSION = 'v44';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
+const APP_VERSION = 'v45';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
 const DECODE_AHEAD = isTouchDevice ? 1 : 2;  // 분석하는 동안 미리 풀어 둘 다음 사진 수 (휴대폰은 메모리 때문에 1장)
 const ETA_WARMUP_PHOTOS = 3;             // 이만큼 분석하기 전에는 남은 시간을 보여주지 않는다 (첫 장은 모델 준비로 느리다)
 const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
@@ -222,6 +222,7 @@ const isExportFolder = (name) => allExportPrefixes().some((prefix) => name.start
 function showToast(html, actions = [], durationMs = 4000) {
   const toast = $('#toast');
   toast.innerHTML = `<span>${html}</span>`;
+  toast.dataset.view = actions.find((action) => action.view)?.view ?? ''; // 버튼이 다른 화면으로 데려가는 알림이면 그 화면 이름
   for (const action of actions) {
     const button = document.createElement('button');
     button.className = 'button';
@@ -2148,6 +2149,8 @@ function setView(viewName) {
   document.body.classList.toggle('immersive', immersive);
   $('meta[name="theme-color"]').content = immersive ? '#24282A' : '#F8F9F7';
   for (const section of document.querySelectorAll('.view')) section.classList.add('hidden');
+  // 알림 버튼이 데려갈 화면에 탭으로 와도 알림을 닫는다 (v45: 내보내기 화면에 '내보내기로' 알림이 남던 문제)
+  if ($('#toast').dataset.view === viewName) $('#toast').classList.add('hidden');
   $(`#view-${PICK_VIEWS.includes(viewName) ? 'pick' : viewName}`).classList.remove('hidden');
   render();
 }
@@ -2217,7 +2220,7 @@ function renderTopbar() {
   if (ready && PICK_VIEWS.includes(state.view) && previousKeepCount !== null && previousKeepCount > target && keepCount === target) {
     celebrate();
     // 줄이기 도중 맞췄으면 바로 내보내기로 갈 수 있게 알림 줄에 버튼을 띄운다. 무시하고 계속 넘기면 더 줄일 수 있다
-    if (state.view === 'distill') showToast(t('targetHitToast', target), [{ label: t('btnGoExport'), run: () => setView('export') }], 8000);
+    if (state.view === 'distill') showToast(t('targetHitToast', target), [{ label: t('btnGoExport'), view: 'export', run: () => setView('export') }], 8000);
   }
   previousKeepCount = ready && !exportCount ? keepCount : null;
   $('#goal [data-i18n="goalKept"]').textContent = exportCount ? t('goalExport') : t('goalKept');
