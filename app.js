@@ -12,6 +12,7 @@ import { simSignature, compareSignatures, isSimilarMatch, SIM_GRAY_W, SIM_GRAY_H
 import { measurePixels, toGrayscale, laplacianVariance, luminanceStats } from './pixel-math.js';
 // 스와이프 물리(스프링)와 목표 장수 축하. 둘 다 앱과 함께 배포한다 (vendor/LICENSES.txt)
 import { animate } from './vendor/motion/motion-animate.mjs';
+import { initStats, track, photoBucket, keptBucket, timeBucket } from './stats.js';
 import { create as createConfetti } from './vendor/confetti/confetti.module.mjs';
 // 움직임 줄이기 설정이면 JS 애니메이션도 바로 끝낸다 (CSS 쪽은 styles.css의 prefers-reduced-motion 규칙)
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
@@ -64,6 +65,7 @@ const COLLECT_ENDPOINT = ''; // POST 로 익명 학습 데이터를 보낸다
 const canPickFolder = 'showDirectoryPicker' in window;      // 폴더를 직접 읽고 쓸 수 있는 브라우저 (데스크톱 크롬, 엣지 등)
 // 휴대폰, 태블릿. 일부 Android Chrome은 pointer: coarse를 알리지 않아서 터치 지점 수와 기기 이름도 본다
 const isTouchDevice = matchMedia('(pointer: coarse)').matches || (navigator.maxTouchPoints > 0 && /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent));
+let statsLoadedAt = 0; // 익명 합계(v47): 사진이 들어온 시각. 분석·첫 10장까지 걸린 시간 구간에 쓴다
 document.documentElement.classList.toggle('touch', isTouchDevice);
 // container queries를 모르는 브라우저(Chrome 104 이하, Safari 15 이하)는 사진 카드 크기를 직접 맞춘다
 const supportsContainerQueries = CSS.supports('container-type: size');
@@ -123,7 +125,7 @@ const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시�
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
 const CACHE_VERSION = 'v5';             // 분석 방식이 바뀌면 올린다 (v5: 같은 사람 알아보기, 미적 점수)
-const APP_VERSION = 'v46';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
+const APP_VERSION = 'v47';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
 const DECODE_AHEAD = isTouchDevice ? 1 : 2;  // 분석하는 동안 미리 풀어 둘 다음 사진 수 (휴대폰은 메모리 때문에 1장)
 const ETA_WARMUP_PHOTOS = 3;             // 이만큼 분석하기 전에는 남은 시간을 보여주지 않는다 (첫 장은 모델 준비로 느리다)
 const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
@@ -513,6 +515,9 @@ async function startWithEntries(folderName, imageEntries, source = { kind: 'hand
   state.photos.sort((left, right) => left.relPath.localeCompare(right.relPath, undefined, { numeric: true }));
   state.photoById = new Map(state.photos.map((photo) => [photo.id, photo]));
   if (!state.photos.length) { showToast(t('noPhotosFound')); return; }
+  statsLoadedAt = performance.now();
+  track('loaded', { n: photoBucket(state.photos.length) });
+  if (state.settings.together) track('together');
   setView('analyze');
   await analyzeAll();
 }
@@ -566,6 +571,7 @@ function blockedWhileOrganizing() {
 }
 $('#pick-folder').onclick = async () => {
   if (blockedWhileOrganizing()) return;
+  track('pick_open');
   if (!canPickFolder) { $('#fallback-input').click(); return; }
   try {
     const directoryHandle = await window.showDirectoryPicker({ id: 'moment-select-source', mode: 'read' });
@@ -621,12 +627,14 @@ function renderReceive() {
 }
 $('#pick-photos').onclick = () => {
   if (blockedWhileOrganizing()) return;
+  track('pick_open');
   if (showsReceive) { receiveState = 'waiting'; renderReceive(); }
   $('#photos-input').click();
 };
 $('#photos-input').addEventListener('cancel', () => {
   if (receiveState !== 'waiting') return;
   receiveState = 'failed';
+  track('receive_fail');
   renderReceive();
 });
 $('#photos-input').onchange = async (event) => {
@@ -702,7 +710,8 @@ function decideTrial(status, fromX = 0) {
   card.dataset.leaving = '1';
   card.classList.add(status === 'keep' ? 'kept' : 'dropped');
   const direction = status === 'keep' ? 1 : -1;
-  const finish = () => { trial.marks.push(status); trial.index++; renderTrial(); };
+  track('trial_start'); // 익명 합계 (v47)
+  const finish = () => { trial.marks.push(status); trial.index++; renderTrial(); if (trial.index >= TRIAL_PHOTOS.length) track('trial_done'); };
   if (reducedMotion.matches) { finish(); return; }
   card.style.transition = 'transform .26s cubic-bezier(.4, 0, 1, 1) .12s, opacity .26s .12s';
   card.style.transform = `translateX(${fromX}px)`;
@@ -771,7 +780,7 @@ function showResume(makeText, buttonKey, onClick) {
   $('#resume-name').textContent = makeText();
   $('#resume-button').dataset.i18n = buttonKey;
   $('#resume-button').textContent = t(buttonKey);
-  $('#resume-button').onclick = onClick;
+  $('#resume-button').onclick = (event) => { track('pick_open'); track('resume'); return onClick(event); };
   $('#resume').classList.remove('hidden');
 }
 (async function setupResume() {
@@ -1551,6 +1560,7 @@ async function analyzeAll() {
   buildSimilarGroups();
   buildUnits();
   state.analysisDone = true;
+  track('analyzed', { t: timeBucket(performance.now() - statsLoadedAt) });
   saveProjectSoon();
   const skipNote = state.skippedFileCount ? t('skipNote', state.skippedFileCount) : '';
   showToast(t('analyzedToast', { count: state.photos.length, groups: state.groups.size, skipNote }));
@@ -1982,6 +1992,12 @@ const UNDO_NUDGE_LIMIT = 3;  // 처음 이만큼만 (되돌릴 수 있다는 걸
 const shouldNudgeUndo = () => performance.now() - lastDecisionAt < UNDO_NUDGE_MS && undoNudges < UNDO_NUDGE_LIMIT && ++undoNudges > 0;
 const undoButtonHtml = () => `<button class="button icon-only undo${shouldNudgeUndo() ? ' nudge' : ''}" id="act-undo" title="${t('undoTitle')}" aria-label="${t('undo')}"><i class="ph ph-arrow-counter-clockwise"></i><span class="undo-label">${t('undo')}</span></button>`;
 
+// 익명 합계 (v47): 처음 10장(사진이 10장보다 적으면 전부)을 정한 순간과 1차 셀렉을 끝낸 순간
+function trackProgress() {
+  const decided = state.photos.length - undecidedCount();
+  if (decided >= Math.min(10, state.photos.length)) track('decided10', { t: timeBucket(performance.now() - statsLoadedAt) });
+  if (decided === state.photos.length && state.analysisDone) track('first_done');
+}
 function recordDecisions(changes, stage, preferences = []) {
   lastDecisionAt = performance.now();
   const now = Date.now();
@@ -2149,6 +2165,7 @@ function setView(viewName) {
   document.body.classList.toggle('immersive', immersive);
   $('meta[name="theme-color"]').content = immersive ? '#24282A' : '#F8F9F7';
   for (const section of document.querySelectorAll('.view')) section.classList.add('hidden');
+  if (viewName === 'export') track('export_view');
   // 알림 버튼이 데려갈 화면에 탭으로 와도 알림을 닫는다 (v45: 내보내기 화면에 '내보내기로' 알림이 남던 문제)
   if ($('#toast').dataset.view === viewName) $('#toast').classList.add('hidden');
   $(`#view-${PICK_VIEWS.includes(viewName) ? 'pick' : viewName}`).classList.remove('hidden');
@@ -2206,6 +2223,7 @@ function renderTopbar() {
   const keepCount = ready ? (exportCount ? selectionIds(exportBasis).length : keepIds().length) : 0;
   const target = goalTarget();
   $('#tab-first').textContent = ready ? num(undecidedCount()) : '';
+  if (ready) trackProgress();
   $('#tab-keep').textContent = ready ? num(keepIds().length) : '';
   $('#tab-drop').textContent = ready ? num(dropIds().length) : '';
   $('#goal-count').textContent = num(keepCount);
@@ -2219,6 +2237,7 @@ function renderTopbar() {
   // 목표보다 많이 남겼다가 줄여서 딱 맞춘 순간만 (1차 셀렉에서 남기다가 목표를 지나는 건 아니다)
   if (ready && PICK_VIEWS.includes(state.view) && previousKeepCount !== null && previousKeepCount > target && keepCount === target) {
     celebrate();
+    track('target_hit');
     // 줄이기 도중 맞췄으면 바로 내보내기로 갈 수 있게 알림 줄에 버튼을 띄운다. 무시하고 계속 넘기면 더 줄일 수 있다
     if (state.view === 'distill') showToast(t('targetHitToast', target), [{ label: t('btnGoExport'), view: 'export', run: () => setView('export') }], 8000);
   }
@@ -4273,6 +4292,7 @@ async function copySelection(ids) {
     await listWritable.close();
     progress.textContent = '';
     showToast(t('copiedToast', { count: photos.length, path: `${escapeHtml(destination.name)}/${escapeHtml(folder.name)}` }), [], 6000);
+    track('export_done', { k: keptBucket(ids.length), how: 'folder' });
   } catch (error) {
     progress.textContent = '';
     if (error.name !== 'AbortError') showToast(t('copyError', escapeHtml(error.message)));
@@ -4305,6 +4325,7 @@ async function downloadSelection(ids) {
   }
   downloadBlob(new Blob([selectionListText(ids)], { type: 'text/plain' }), t('listFileName'));
   progress.textContent = '';
+  track('export_done', { k: keptBucket(ids.length), how: 'download' });
 }
 
 // 공유 시트 저장: 공유 창은 버튼을 누를 때마다 한 번만 열 수 있어서 묶음 단위로 이어서 연다
@@ -4328,6 +4349,7 @@ async function shareNextBatch(ids) {
     }));
     await navigator.share({ files });
     shareProgress.nextIndex += batch.length;
+    track('export_done', { k: keptBucket(ids.length), how: 'share' });
   } catch (error) {
     if (error.name !== 'AbortError') showToast(t('shareError', escapeHtml(error.message)));
   }
@@ -4443,4 +4465,8 @@ if (new URLSearchParams(location.search).get('debug') === '1') {
 }
 // 시작 화면 아래 의견 링크
 if (FEEDBACK_URL) { $('#feedback-link').href = feedbackUrl(); $('#feedback-link').hidden = false; }
+// 익명 합계 (v47, stats.js): 방문, 의견 링크 누름
+initStats(getLanguage);
+track('visit');
+document.addEventListener('click', (event) => { if (FEEDBACK_URL && event.target.closest?.(`a[href^="${FEEDBACK_URL}"]`)) track('feedback'); });
 applyLanguage();

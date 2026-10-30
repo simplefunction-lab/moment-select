@@ -8,7 +8,8 @@ Swipe through hundreds of photos and keep the ones you want. Built for the day t
 
 ## Your photos stay on your device
 
-- Photos are read and analyzed in the browser. Nothing is uploaded.
+- Photos are read and analyzed in the browser. Photos, file names and scores are never uploaded.
+- Since v47 the page counts anonymous daily totals (which steps were reached, in ranges such as 50–199 photos) through `stats.js`. No IDs, cookies or device storage; nothing is sent when Global Privacy Control or Do Not Track is on.
 - Face detection, face recognition, the aesthetic model, fonts and icons ship with the app. A Content Security Policy blocks every request to another origin, so the page cannot send anything out even by mistake.
 - The MediaPipe library normally sends usage statistics (task type and timing, no photos) to Google. The app switches this off when it loads MediaPipe, and the same policy would block it anyway, so nothing leaves the device.
 - The models (about 15 MB, plus about 18 MB for the closed-eye model when closed-eye scoring is on) download once, the first time you analyze photos, with a note saying what each one is for. After that the app works offline.
