@@ -69,7 +69,7 @@ const MESSAGES = {
 
     // ---------- 시작 화면 ----------
     setupTitle: '남길 사진 고르기',
-    privacyLine: '사진은 이 기기 밖으로 나가지 않아요. 어디에도 올리지 않아요.',
+    privacyLine: '사진은 이 기기 밖으로 나가지 않아요. 익명 합계만 세요.',
     moreOptions: '설정 더 보기',
     setupIntro: '수백 장을 넘기며 잘 나온 사진만 남겨요. 모든 처리는 이 기기 안에서 해요.',
     driveNote: '구글 드라이브를 쓰나요? Google Drive 데스크톱을 설치해 그 안의 사진 폴더를 고르고, 먼저 오프라인 사용으로 설정해 두세요.',
@@ -365,7 +365,7 @@ const MESSAGES = {
     defaultNameA: 'Me', defaultNameB: 'Partner',
 
     setupTitle: 'Pick the photos to keep',
-    privacyLine: 'Your photos never leave this device. Nothing is uploaded.',
+    privacyLine: 'Your photos never leave this device. We count only anonymous totals.',
     moreOptions: 'More options',
     setupIntro: 'Swipe through hundreds of shots and keep the best. Everything runs on your device.',
     driveNote: 'Using Google Drive? Install Google Drive for desktop, pick the folder there, and make it available offline first.',

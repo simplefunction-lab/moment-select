@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<!-- 외부로 나가는 연결을 브라우저 차원에서 막는다: 스크립트, 글꼴, 데이터 요청 모두 같은 출처만 허용 -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<!-- 외부로 나가는 연결을 브라우저 차원에서 막는다: 스크립트, 글꼴, 데이터 요청 모두 같은 출처만 허용. 예외는 익명 합계 서버 하나 (v47, stats.js) -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self'; connect-src 'self' https://simplefunction-stats.vercel.app; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="theme-color" content="#F8F9F7">
 <!-- 홈 화면에서 연 앱 (v41): 주소창 없이, 위쪽 상태 표시줄은 밝은 바탕에 검은 글자, 홈 화면 이름은 짧게 -->
 <meta name="mobile-web-app-capable" content="yes">
@@ -89,7 +89,7 @@
       <div class="hero">
         <h1 id="setup-title" data-i18n="setupTitle">Pick the photos to keep</h1>
         <p class="lede" data-i18n="setupIntro">Swipe through hundreds of shots and keep the best. Everything runs on your device.</p>
-        <p class="privacy"><i class="ph ph-lock-simple" aria-hidden="true"></i><span data-i18n="privacyLine">Your photos never leave this device. Nothing is uploaded.</span></p>
+        <p class="privacy"><i class="ph ph-lock-simple" aria-hidden="true"></i><span data-i18n="privacyLine">Your photos never leave this device. We count only anonymous totals.</span></p>
       </div>
 
       <!-- 먼저 해 보기 (v43): 견본 사진 4장으로 고르기 화면과 같은 남김 빛·흑백 표시를 미리 해 본다. 내 사진은 쓰지 않는다 -->
