@@ -16,6 +16,8 @@ renders/
 !samples/trial-2.jpg
 !samples/trial-3.jpg
 !samples/trial-4.jpg
+# 링크 미리보기 그림 (v46). 앱 화면과 rawpixel CC0 사진(릴스와 같은 화면), 만드는 법은 비공개 폴더 tests/og-v46.py
+!og.jpg
 
 # Claude Code local settings and hooks for this machine
 .claude/settings.local.json
