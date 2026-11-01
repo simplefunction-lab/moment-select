@@ -66,6 +66,7 @@ const canPickFolder = 'showDirectoryPicker' in window;      // 폴더를 직접 
 // 휴대폰, 태블릿. 일부 Android Chrome은 pointer: coarse를 알리지 않아서 터치 지점 수와 기기 이름도 본다
 const isTouchDevice = matchMedia('(pointer: coarse)').matches || (navigator.maxTouchPoints > 0 && /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent));
 let statsLoadedAt = 0; // 익명 합계(v47): 사진이 들어온 시각. 분석·첫 10장까지 걸린 시간 구간에 쓴다
+let statsResumed = false; // 익명 합계(v48): 지금 사진이 저장된 결정을 복원한 것이면 true. 이 사진은 퍼널에 넣지 않는다
 document.documentElement.classList.toggle('touch', isTouchDevice);
 // container queries를 모르는 브라우저(Chrome 104 이하, Safari 15 이하)는 사진 카드 크기를 직접 맞춘다
 const supportsContainerQueries = CSS.supports('container-type: size');
@@ -125,7 +126,7 @@ const LEARN_MIN_DECISIONS = 20;           // 이만큼 고르면 학습을 시�
 const LEARN_MIN_PER_CLASS = 5;            // 남김과 뺌이 각각 이만큼은 있어야 학습
 const LEARN_EVERY = 10;                   // 새 결정이 이만큼 쌓일 때마다 다시 학습
 const CACHE_VERSION = 'v5';             // 분석 방식이 바뀌면 올린다 (v5: 같은 사람 알아보기, 미적 점수)
-const APP_VERSION = 'v47';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
+const APP_VERSION = 'v48';              // 앱 버전. 배포할 때마다 sw.js의 APP_VERSION과 같이 올린다
 const DECODE_AHEAD = isTouchDevice ? 1 : 2;  // 분석하는 동안 미리 풀어 둘 다음 사진 수 (휴대폰은 메모리 때문에 1장)
 const ETA_WARMUP_PHOTOS = 3;             // 이만큼 분석하기 전에는 남은 시간을 보여주지 않는다 (첫 장은 모델 준비로 느리다)
 const CROSS_CHECK_SAMPLES = 6;           // WebGL과 CPU 결과를 비교해 볼 사진 수
@@ -516,7 +517,9 @@ async function startWithEntries(folderName, imageEntries, source = { kind: 'hand
   state.photoById = new Map(state.photos.map((photo) => [photo.id, photo]));
   if (!state.photos.length) { showToast(t('noPhotosFound')); return; }
   statsLoadedAt = performance.now();
-  track('loaded', { n: photoBucket(state.photos.length) });
+  // 앞에서 정한 사진이 이번 탭의 '10장 정함'으로 세어지면 안 된다 (v48). 정한 사진이 하나도 없으면 처음 고르는 것과 같다
+  statsResumed = state.photos.some((photo) => statusOf(photo.id, 'a') || statusOf(photo.id, 'b'));
+  track(statsResumed ? 'resume' : 'loaded', { n: photoBucket(state.photos.length) });
   if (state.settings.together) track('together');
   setView('analyze');
   await analyzeAll();
@@ -780,7 +783,7 @@ function showResume(makeText, buttonKey, onClick) {
   $('#resume-name').textContent = makeText();
   $('#resume-button').dataset.i18n = buttonKey;
   $('#resume-button').textContent = t(buttonKey);
-  $('#resume-button').onclick = (event) => { track('pick_open'); track('resume'); return onClick(event); };
+  $('#resume-button').onclick = (event) => { track('pick_open'); return onClick(event); };
   $('#resume').classList.remove('hidden');
 }
 (async function setupResume() {
@@ -1560,7 +1563,7 @@ async function analyzeAll() {
   buildSimilarGroups();
   buildUnits();
   state.analysisDone = true;
-  track('analyzed', { t: timeBucket(performance.now() - statsLoadedAt) });
+  if (!statsResumed) track('analyzed', { t: timeBucket(performance.now() - statsLoadedAt) });
   saveProjectSoon();
   const skipNote = state.skippedFileCount ? t('skipNote', state.skippedFileCount) : '';
   showToast(t('analyzedToast', { count: state.photos.length, groups: state.groups.size, skipNote }));
@@ -1994,10 +1997,13 @@ const undoButtonHtml = () => `<button class="button icon-only undo${shouldNudgeU
 
 // 익명 합계 (v47): 처음 10장(사진이 10장보다 적으면 전부)을 정한 순간과 1차 셀렉을 끝낸 순간
 function trackProgress() {
+  if (statsResumed) return;
   const decided = state.photos.length - undecidedCount();
   if (decided >= Math.min(10, state.photos.length)) track('decided10', { t: timeBucket(performance.now() - statsLoadedAt) });
   if (decided === state.photos.length && state.analysisDone) track('first_done');
 }
+// 복원한 사진의 내보내기는 퍼널 밖에서 따로 센다 (v48)
+const trackExport = (count, how) => track(statsResumed ? 'resume_export' : 'export_done', { k: keptBucket(count), how });
 function recordDecisions(changes, stage, preferences = []) {
   lastDecisionAt = performance.now();
   const now = Date.now();
@@ -4292,7 +4298,7 @@ async function copySelection(ids) {
     await listWritable.close();
     progress.textContent = '';
     showToast(t('copiedToast', { count: photos.length, path: `${escapeHtml(destination.name)}/${escapeHtml(folder.name)}` }), [], 6000);
-    track('export_done', { k: keptBucket(ids.length), how: 'folder' });
+    trackExport(ids.length, 'folder');
   } catch (error) {
     progress.textContent = '';
     if (error.name !== 'AbortError') showToast(t('copyError', escapeHtml(error.message)));
@@ -4325,7 +4331,7 @@ async function downloadSelection(ids) {
   }
   downloadBlob(new Blob([selectionListText(ids)], { type: 'text/plain' }), t('listFileName'));
   progress.textContent = '';
-  track('export_done', { k: keptBucket(ids.length), how: 'download' });
+  trackExport(ids.length, 'download');
 }
 
 // 공유 시트 저장: 공유 창은 버튼을 누를 때마다 한 번만 열 수 있어서 묶음 단위로 이어서 연다
@@ -4349,7 +4355,7 @@ async function shareNextBatch(ids) {
     }));
     await navigator.share({ files });
     shareProgress.nextIndex += batch.length;
-    track('export_done', { k: keptBucket(ids.length), how: 'share' });
+    trackExport(ids.length, 'share');
   } catch (error) {
     if (error.name !== 'AbortError') showToast(t('shareError', escapeHtml(error.message)));
   }

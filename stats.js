@@ -2,12 +2,13 @@
 // 보내는 것: 사건 이름과 정해 둔 꼬리표(화면 언어, 기기 종류, 앱으로 열었는지, 들어온 곳, 장수·시간 구간)뿐이다
 // 보내지 않는 것: 사진, 파일 이름, 점수, 얼굴, 기기 번호, 쿠키. 이 기기에 아무것도 저장하지 않는다(탭이 닫히면 잊는다)
 // 탭마다 사건 하나는 한 번만 보낸다. 퍼널 단계(STEPS)는 앞 단계를 보낸 탭만 보낸다(닫힌 퍼널)
+// 저장된 결정을 복원한 탭은 '사진 들어옴' 대신 resume을 보내고 퍼널에서 나간다. 내보내면 resume_export로 센다 (v48)
 // 브라우저의 추적 거부 신호(GPC, Do Not Track)가 켜져 있으면 아무것도 보내지 않는다
 // 실제 사이트가 아니면(로컬 시험) 보내지 않고 window.momentSelectStatsLog에 쌓기만 한다 (출시 게이트가 이것을 검사한다)
 export const STATS_ENDPOINT = 'https://simplefunction-stats.vercel.app/api/e';
 const LIVE_HOST = 'simplefunction-lab.github.io';
 export const STEPS = ['visit', 'pick_open', 'loaded', 'analyzed', 'decided10', 'first_done', 'export_view', 'export_done'];
-export const EVENTS = [...STEPS, 'trial_start', 'trial_done', 'receive_fail', 'target_hit', 'together', 'resume', 'feedback'];
+export const EVENTS = [...STEPS, 'trial_start', 'trial_done', 'receive_fail', 'target_hit', 'together', 'resume', 'resume_export', 'feedback'];
 
 const optedOut = navigator.globalPrivacyControl === true || navigator.doNotTrack === '1' || window.doNotTrack === '1';
 const live = location.hostname === LIVE_HOST;
